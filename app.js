@@ -1,5 +1,6 @@
 import * as auth from "./auth.js";
 import { checkWagesRule, fixStructure, formatINR } from "./lib/ctc.js";
+import { parseHire, fmtBudget } from "./lib/intent.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -72,129 +73,90 @@ $("#setupForm").addEventListener("submit", async e => {
 
 $("#signOut").addEventListener("click", async () => { await auth.signOut(); user = null; profile = null; $("#email").value = ""; show("s-email"); });
 
+/* =================== DATA (one source for chat, Check views and strip) =================== */
+// Preview data mirrors supabase/seed.sql. Demo "today" is Wed 11 Nov 2026.
+
+let D, uid = 100;
+const id = () => ++uid;
+function seed() {
+  const roles = [
+    { id: 1, title: "Backend Developer", city: "Hyderabad", openings: 1, days: 21, budget: "₹10–14 L", status: "Open" },
+    { id: 2, title: "Operations Analyst", city: "Hyderabad", openings: 1, days: 14, budget: "₹5–7 L", status: "Open" },
+    { id: 3, title: "Customer Success Associate", city: "Hyderabad", openings: 1, days: 9, budget: "₹4.5–6 L", status: "Open" },
+  ];
+  const people = [];
+  const cand = (name, role, stage, where, extra = {}) => people.push({ id: id(), name, type: "Candidate", role, stage, where, owner: "hr", ...extra });
+  ["Farah K.", "Dev P.", "Aditya N.", "Bhavna S.", "Chetan R.", "Divya M.", "Eshan G.", "Gauri T.", "Harsh V.", "Isha B.", "Jayant L.", "Kavita P."].forEach(n => cand(n, 1, "Applied", "New application"));
+  ["Neha J.", "Rohan M.", "Sana Q.", "Tushar A.", "Uma D."].forEach(n => cand(n, 1, "Screened", "Screen call done"));
+  cand("Ankit Verma", 1, "Interview", "Feedback late (Arjun Mehta)", { late: true });
+  cand("Lakshmi R.", 1, "Interview", "Feedback late (Arjun Mehta)", { late: true });
+  cand("Sameer T.", 1, "Interview", "Round 1 on Fri 13 Nov");
+  cand("Kiran S.", 1, "Offer", "Offer to build (₹12 L)");
+  [["Megha D.", 48], ["Imran S.", 52], ["Tarun B.", 41], ["Pooja N.", 55]].forEach(([n, s]) => cand(n, 2, "Screened", `Excel test ${s}% (below 60%)`, { score: s, failed: true }));
+  ["Rhea K.", "Vivek J."].forEach(n => cand(n, 2, "Applied", "New application"));
+  ["Nisha P.", "Omkar S.", "Prerna V."].forEach(n => cand(n, 3, "Applied", "New application"));
+  cand("Arjun Rao", 3, "Screened", "Screen call done");
+  people.push({ id: id(), name: "Sneha Rao", type: "Joiner", roleTitle: "Product Designer", where: "Joins Mon 16 Nov", owner: "hr", day1: "Mon 16 Nov",
+    checklist: [{ t: "Documents uploaded", done: true }, { t: "Appointment letter", done: false }, { t: "Laptop and email", done: false }, { t: "Day 1 plan and buddy", done: true }] });
+  people.push({ id: id(), name: "Priya Nair", type: "Employee", roleTitle: "Customer Success Associate", where: "Probation ends 23 Nov", owner: "hr",
+    probation: { ends: "Mon 23 Nov", manager: "Vikram", status: "Review due" } });
+  const tasks = [
+    { id: id(), key: "chase", title: "Arjun Mehta hasn't given feedback on 2 candidates", ctx: "Backend Developer · 26 hours overdue · escalates to Vikram at 4 pm", owner: "Arjun Mehta", when: "Late", done: false },
+    { id: id(), key: "letter", title: "Sneha joins Monday with no appointment letter", ctx: "Every joiner needs one before Day 1", owner: "hr", when: "Late", done: false },
+    { id: id(), key: "offer", title: "Build Kiran's offer", ctx: "Backend Developer · ₹12 L · structure needs the 50% wages check", owner: "hr", when: "Today", done: false },
+    { id: id(), key: "probation", title: "Start Priya's probation review", ctx: "Probation ends Mon 23 Nov · manager review is due before then", owner: "hr", when: "This week", done: false },
+    { id: id(), key: "bulk", title: "Send rejection notes to 4 Operations Analyst candidates", ctx: "Below 60% on the Excel test · job-relevant reason drafted", owner: "hr", when: "This week", done: false },
+    { id: id(), key: "laptop", title: "Laptop and email for Sneha", ctx: "Needed before Mon 16 Nov", owner: "Suresh (IT)", when: "This week", done: false },
+  ];
+  return { roles, people, tasks, pending: [], audit: [], done: {} };
+}
+const roleOf = rid => D.roles.find(r => r.id === rid);
+const person = name => D.people.find(p => p.name === name);
+const task = key => D.tasks.find(t => t.key === key);
+function closeTask(key) { const t = task(key); if (t && !t.done) { t.done = true; t.when = "Done"; } }
+function stageCounts(rid) { const c = { Applied: 0, Screened: 0, Interview: 0, Offer: 0 }; D.people.forEach(p => { if (p.role === rid && c[p.stage] !== undefined) c[p.stage]++; }); return c; }
+
 /* =================== DESK =================== */
 const inner = $("#inner"), log = $("#log"), ph = $("#ph"), chipsEl = $("#chips");
-let S, currentTab = "desk";
-const TABS = ["desk", "roles", "pipeline", "joiners", "approvals"];
+let mode = "solo", currentTab = "desk";
+const TABS = ["desk", "today", "hiring", "people", "joiners"];
 const first = () => (profile?.name || "there").split(/\s+/)[0];
 const phoneLabel = () => profile?.phone ? `you · ${profile.phone}` : "you";
+const ownerName = o => o === "hr" ? (mode === "solo" ? "You" : "Ritu") : o === "lead" ? `${first()} (you)` : o;
 
 function openApp() {
-  $("#coLine").textContent = `${profile.company} · Desk is using Acme Fintech sample data for this test`;
-  S = null; init(profile.setup === "lead_juniors" ? "lead" : "solo");
+  $("#coLine").textContent = `${profile.company} · preview with Acme Fintech sample data`;
+  init(profile.setup === "lead_juniors" ? "lead" : "solo");
   show("s-app"); showTab();
 }
-
-/* =================== TABS =================== */
-function showTab() {
-  const t = location.hash.slice(1);
-  currentTab = TABS.includes(t) ? t : "desk";
-  document.querySelectorAll(".tabs a").forEach(a => a.dataset.tab === currentTab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
-  const onDesk = currentTab === "desk";
-  $("#chatView").hidden = !onDesk; $("#view").hidden = onDesk;
-  if (onDesk) { scroll(); $("#q").focus({ preventScroll: true }); } else renderTab();
-}
-window.addEventListener("hashchange", () => { if (!$("#s-app").hidden && S) showTab(); });
-function goDesk(label, fn) { location.hash = "desk"; me(label); fn(); }
-
-const pillFor = s => ({ Open: "p-ok", Filled: "p-acc", missing: "p-late", sent: "p-ok", requested: "p-warn", due: "p-warn", "with manager": "p-acc", confirmed: "p-ok", extended: "p-mut" }[s] || "p-mut");
-const VACT = {
-  newRole: () => goDesk("Hire 2 sales execs in Pune", hire),
-  pipeline: () => { location.hash = "pipeline"; },
-  offer: () => goDesk("Build Kiran's offer", offer),
-  bulk: () => goDesk("Reject candidates who failed the test", bulk),
-  chase: () => goDesk("Chase Arjun", chase),
-  letter: () => goDesk("Draft Sneha's letter", letter),
-  probation: () => goDesk("Start Priya's probation review", probation),
-  lead: () => $("#m-lead").click(),
-};
-$("#view").addEventListener("click", e => {
-  const b = e.target.closest("[data-v]"); if (!b) return;
-  if (b.dataset.v === "approve" || b.dataset.v === "sendback") {
-    const item = S.pending.find(x => x.id === Number(b.dataset.id));
-    if (item) { location.hash = "desk"; item.resolve(b.dataset.v === "approve", "in Approvals"); }
-    return;
-  }
-  VACT[b.dataset.v]?.();
-});
-
-function renderTab() {
-  const v = $("#view");
-  const head = (h, p, act) => `<div class="vhead"><div><h2>${h}</h2><p>${p}</p></div>${act || ""}</div>`;
-  let html = "";
-  if (currentTab === "roles") {
-    html = head("Roles", `${S.rolesList.filter(r => r.status === "Open").length} open · sample data`, `<button class="btn primary" type="button" data-v="newRole">New role</button>`) +
-      `<div class="card"><div class="tablewrap"><table>
-       <tr><th>Role</th><th>City</th><th>Openings</th><th>Budget (CTC)</th><th>Days open</th><th>Applied → Screened → Interview → Offer</th><th>Status</th></tr>
-       ${S.rolesList.map((r, i) => `<tr><td><b style="font-weight:500">${esc(r.title)}</b><div class="note">${esc(r.note)}</div></td><td>${esc(r.city)}</td><td>${r.openings}</td><td>${esc(r.budget)}</td><td>${r.days}</td>
-         <td><span class="funnel"><b>${r.funnel[0]}</b>→<b>${r.funnel[1]}</b>→<b>${r.funnel[2]}</b>→<b>${r.funnel[3]}</b></span></td>
-         <td><span class="pill ${pillFor(r.status)}">${esc(r.status)}</span>${i === 0 ? ` <button class="link" type="button" data-v="pipeline">Pipeline</button>` : ""}</td></tr>`).join("")}
-       </table></div></div>`;
-  } else if (currentTab === "pipeline") {
-    const be = S.rolesList[0], kiranHired = S.done.accepted;
-    html = head("Pipeline", "Backend Developer · tap a candidate for the next step") +
-      `<div class="card"><h4><span class="kind">Backend Developer</span>${be.days} days open <span class="pill ${kiranHired ? "p-acc" : "p-warn"}">${kiranHired ? "Filled" : "1 offer pending"}</span></h4><div class="c"><div class="board">
-       <div class="col"><h5>Applied · 12</h5><span class="cand">Farah K.</span><span class="cand">Dev P.</span><span class="note">+10 more</span></div>
-       <div class="col"><h5>Screened · 5</h5><span class="cand">Neha J.</span><span class="cand">Rohan M.</span><span class="note">+3 more</span></div>
-       <div class="col"><h5>Interview · 3</h5><button class="cand" type="button" data-v="chase">Ankit V. · feedback late</button><span class="cand">Lakshmi R.</span><span class="cand">Sameer T.</span></div>
-       <div class="col"><h5>Offer · ${kiranHired ? 0 : 1}</h5>${kiranHired ? '<span class="note">Kiran S. accepted · joins 30 Nov</span>' : '<button class="cand hot" type="button" data-v="offer">Kiran S. → build offer</button>'}</div>
-       </div></div></div>
-       <div class="card"><h4><span class="kind">Operations Analyst</span>14 days open <span class="pill p-warn">Action needed</span></h4>
-        <div class="item"><div class="t">4 candidates scored below 60% on the Excel test<small>Desk has a rejection draft with a job-relevant reason</small></div><button class="btn" type="button" data-v="bulk">Review rejections</button></div></div>`;
-  } else if (currentTab === "joiners") {
-    html = head("Joiners & probation", "From offer accepted to confirmation") +
-      `<div class="card"><h4><span class="kind">Joining soon</span></h4>
-       ${S.joiners.map(j => `<div class="item"><div class="t"><b style="font-weight:500">${esc(j.name)}</b> · ${esc(j.role)}<small>Day 1: ${esc(j.day1)}</small></div>
-        <span class="pill ${pillFor(j.letter)}">Letter: ${esc(j.letter)}</span><span class="pill ${pillFor(j.it)}">Laptop: ${esc(j.it)}</span>
-        ${j.letter === "missing" ? '<button class="btn primary" type="button" data-v="letter">Draft letter</button>' : ""}</div>`).join("")}</div>
-       <div class="card"><h4><span class="kind">Probation reviews</span></h4>
-       ${S.probation.map(p => `<div class="item"><div class="t"><b style="font-weight:500">${esc(p.name)}</b> · ${esc(p.role)}<small>Ends ${esc(p.ends)} · manager ${esc(p.manager)}</small></div>
-        <span class="pill ${pillFor(p.status)}">${esc(p.status === "due" ? "Review due" : p.status)}</span>
-        ${p.status === "due" ? '<button class="btn primary" type="button" data-v="probation">Start review</button>' : ""}</div>`).join("")}</div>`;
-  } else if (currentTab === "approvals") {
-    const pend = S.pending.length
-      ? S.pending.map(p => `<div class="item"><div class="t"><b style="font-weight:500">${esc(p.what)}</b><small>Drafted by ${esc(p.by)} · also sent to ${esc(phoneLabel())} on WhatsApp</small></div>
-          <button class="btn" type="button" data-v="sendback" data-id="${p.id}">Send back</button><button class="btn primary" type="button" data-v="approve" data-id="${p.id}">Approve</button></div>`).join("")
-      : `<div class="emptyv">${S.mode === "solo" ? 'Nothing waiting. In Solo setup, what you approve goes out straight away. <button class="link" type="button" data-v="lead">Switch to Lead + juniors</button> to see the review queue.' : "Nothing waiting for approval."}</div>`;
-    html = head("Approvals", "Nothing reaches a candidate or employee without a named approval") +
-      `<div class="card"><h4><span class="kind">Waiting for ${esc(first())}</span></h4>${pend}</div>
-       <div class="card"><h4><span class="kind">Approved today</span></h4>${audit.length ? audit.map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} at ${a.at.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</small></div></div>`).join("") : '<div class="emptyv">No approvals yet today.</div>'}</div>`;
-  }
-  v.innerHTML = `<div class="inner">${html}</div>`;
-}
-
-function init(mode) {
-  S = {
-    mode: mode || S?.mode || "solo", roles: 3, late: 2, join: 1, prob: 1, queue: 0, done: {}, pending: [],
-    rolesList: [
-      { title: "Backend Developer", city: "Hyderabad", openings: 1, days: 21, budget: "₹10–14 L", funnel: [12, 5, 3, 1], status: "Open", note: "1 offer pending" },
-      { title: "Operations Analyst", city: "Hyderabad", openings: 1, days: 14, budget: "₹5–7 L", funnel: [18, 6, 4, 0], status: "Open", note: "4 failed the Excel test" },
-      { title: "Customer Success", city: "Hyderabad", openings: 1, days: 9, budget: "₹4.5–6 L", funnel: [9, 3, 0, 0], status: "Open", note: "Screening" },
-    ],
-    joiners: [{ name: "Sneha Rao", role: "Product Designer", day1: "Mon 16 Nov", letter: "missing", it: "requested" }],
-    probation: [{ name: "Priya Nair", role: "Customer Success Associate", ends: "23 Nov", manager: "Vikram", status: "due" }],
-  };
-  audit.length = 0;
+function init(m) {
+  if (m) mode = m;
+  D = seed();
   inner.innerHTML = ""; ph.innerHTML = '<div class="empty">Messages Desk sends appear here.</div>';
   paint(); brief();
 }
+
 function paint() {
-  S.queue = S.pending.length;
-  set("#t-roles", S.roles); set("#t-late", S.late); set("#t-join", S.join); set("#t-prob", S.prob); set("#t-queue", S.queue);
-  $("#n-roles").textContent = S.rolesList.length;
-  $("#n-joiners").textContent = S.joiners.length + S.probation.filter(p => p.status === "due").length || "";
-  const na = $("#n-approvals"); na.textContent = S.pending.length || ""; na.classList.toggle("hot", S.pending.length > 0);
+  const open = D.tasks.filter(t => !t.done);
+  const late = open.filter(t => t.when === "Late").length;
+  const joiners = D.people.filter(p => p.type === "Joiner");
+  const prob = D.people.filter(p => p.probation && !["Confirmed", "Extended"].includes(p.probation.status));
+  set("#t-roles", D.roles.filter(r => r.status === "Open").length); set("#t-late", late); set("#t-join", joiners.length); set("#t-prob", prob.length); set("#t-queue", D.pending.length);
+  $("#t-late").classList.toggle("late", late > 0);
+  $("#t-queue").hidden = mode !== "lead";
+  $("#who").textContent = mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
+  $("#m-solo").setAttribute("aria-pressed", mode === "solo"); $("#m-lead").setAttribute("aria-pressed", mode === "lead");
+  const nt = $("#n-today"); nt.textContent = open.length || ""; nt.classList.toggle("hot", late > 0);
+  $("#n-hiring").textContent = D.roles.filter(r => r.status === "Open").length || "";
+  $("#n-people").textContent = D.people.length;
+  $("#n-joiners").textContent = (joiners.length + prob.length) || "";
   if (currentTab !== "desk") renderTab();
-  $("#t-late").classList.toggle("late", S.late > 0);
-  $("#t-queue").hidden = S.mode !== "lead";
-  $("#who").textContent = S.mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
-  $("#m-solo").setAttribute("aria-pressed", S.mode === "solo"); $("#m-lead").setAttribute("aria-pressed", S.mode === "lead");
 }
 function set(sel, v) { const el = $(sel), b = el.querySelector("b"); if (b.textContent !== String(v)) { b.textContent = v; el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); } }
 const scroll = () => { log.scrollTop = log.scrollHeight; };
 function me(t) { const d = document.createElement("div"); d.className = "msg me"; d.innerHTML = `<div class="bubble">${esc(t)}</div>`; inner.append(d); scroll(); }
 function desk(html) { const d = document.createElement("div"); d.className = "msg"; d.innerHTML = `<div class="av" aria-hidden="true">D</div><div class="mbody">${html}</div>`; inner.append(d); bind(d); scroll(); return d; }
-const later = (fn, ms = 500) => setTimeout(fn, ms);
+const later = (fn, ms = 450) => setTimeout(fn, ms);
 const say = t => desk(`<div class="bubble">${t}</div>`);
 function chips(list) { chipsEl.innerHTML = ""; list.forEach(([label, fn]) => { const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = label; b.onclick = () => { me(label); fn(); }; chipsEl.append(b); }); }
 const ACT = {};
@@ -212,86 +174,104 @@ function wa(to, text, acts) {
 function reply(t) { const d = document.createElement("div"); d.className = "wam out"; d.textContent = t; ph.append(d); ph.scrollTop = ph.scrollHeight; }
 
 function defaults() {
-  chips([["Chase Arjun", chase], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Hire 2 sales execs in Pune", hire],
+  chips([["What's on today?", brief], ["Chase Arjun", chase], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
     ["Reject candidates who failed the test", bulk], ["Start Priya's probation review", probation], ["Wrap up my day", wrap]]);
 }
 
 // Pencil & Ink: AI output is a draft until a named person approves it. Every approval is logged.
-const audit = [];
-function logApproval(what, by) { audit.push({ what, by, at: new Date() }); }
-let pid = 0;
+function logApproval(what, by) { D.audit.push({ what, by, at: new Date() }); }
 function approve(btn, what, after) {
-  btn.closest(".card").querySelectorAll("button").forEach(x => x.disabled = true);
-  if (S.mode === "solo") { logApproval(what, first()); after(); return; }
-  const item = { id: ++pid, what, by: "Ritu", at: new Date() };
+  btn.closest(".card")?.querySelectorAll("button").forEach(x => x.disabled = true);
+  if (mode === "solo") { logApproval(what, first()); after(); paint(); return; }
+  const item = { id: id(), what };
+  const t = { id: item.id, key: "approval:" + item.id, title: `Approve ${what}`, ctx: "Drafted by Ritu · goes out once approved", owner: "lead", when: "Today", done: false };
+  D.tasks.unshift(t);
   item.resolve = (ok, via) => {
-    if (!S.pending.includes(item)) return;
-    S.pending = S.pending.filter(x => x !== item);
+    if (!D.pending.includes(item)) return;
+    D.pending = D.pending.filter(x => x !== item); closeTask(t.key);
     item.waNode?.querySelectorAll("button").forEach(x => x.disabled = true);
+    item.card?.querySelectorAll("button").forEach(x => x.disabled = true);
     if (ok) { logApproval(what, first()); say(`<span class="pill p-ok">Approved by ${esc(first())}${via ? " " + via : ""}</span>`); after(); }
     else say(`${esc(first())} sent it back: <i>"Add the joining bonus clause."</i> I've reopened the draft.`);
     paint();
   };
-  S.pending.push(item); paint();
-  say(`Sent <b>${esc(what)}</b> to ${esc(first())} for approval on WhatsApp and in Approvals. It goes out once approved.`);
-  item.waNode = wa(phoneLabel(), `Ritu drafted <b>${esc(what)}</b>. Approve it?`, [
-    ["Approve", () => item.resolve(true, "on WhatsApp")],
-    ["Send back with a comment", () => item.resolve(false)]]);
+  D.pending.push(item); paint();
+  say(`Sent <b>${esc(what)}</b> to ${esc(first())} for approval, in the app and on WhatsApp. It goes out once approved.`);
+  item.waNode = wa(phoneLabel(), `Ritu drafted <b>${esc(what)}</b>. Approve it?`, [["Approve", () => item.resolve(true, "on WhatsApp")], ["Send back with a comment", () => item.resolve(false)]]);
+}
+function reviewPending(pid) {
+  const item = D.pending.find(x => x.id === pid); if (!item) return say("That approval is already done.");
+  const d = desk(`<div class="card draft"><h4><span class="kind">Approval</span>${esc(item.what)} <span class="pill p-warn">Waiting for you</span></h4><div class="c">
+    <div class="why">Drafted by Ritu. Approving sends it and logs your name.</div>
+    <div class="row"><button class="btn primary" type="button" data-pa="1">Approve &amp; send</button><button class="btn" type="button" data-pa="0">Send back</button></div></div></div>`);
+  item.card = d;
+  d.querySelectorAll("[data-pa]").forEach(b => b.onclick = () => item.resolve(b.dataset.pa === "1", "in the app"));
 }
 
 function brief() {
   const h = new Date().getHours(), hi = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  const open = D.tasks.filter(t => !t.done && t.when !== "This week" || (!t.done && t.key === "probation")).slice(0, 4);
+  const pill = w => w === "Late" ? "p-late" : w === "Today" ? "p-warn" : "p-acc";
   desk(`<div class="bubble">${hi}, ${esc(first())}. Here's your HR for today. About 15 minutes of work.</div>
-  <div class="card"><h4><span class="kind">Brief</span><span class="pill p-late">2 late</span><span class="pill p-warn">1 due soon</span></h4>
-   <div class="item"><span class="pill p-late">Late</span><div class="t">Arjun hasn't given feedback on 2 candidates<small>Backend Developer · 26 hours overdue · escalates to Vikram at 4 pm</small></div><button class="btn primary" type="button" data-a="chase" data-once>Chase him</button></div>
-   <div class="item"><span class="pill p-late">Late</span><div class="t">Sneha joins Monday with no appointment letter<small>Every joiner needs one before Day 1</small></div><button class="btn primary" type="button" data-a="letter" data-once>Draft it</button></div>
-   <div class="item"><span class="pill p-warn">Due soon</span><div class="t">Priya's probation ends on 23 Nov<small>Manager review is due before the end date</small></div><button class="btn primary" type="button" data-a="probation" data-once>Start review</button></div>
+  <div class="card"><h4><span class="kind">Brief</span>${D.tasks.filter(t => !t.done && t.when === "Late").length ? `<span class="pill p-late">${D.tasks.filter(t => !t.done && t.when === "Late").length} late</span>` : '<span class="pill p-ok">Nothing late</span>'}</h4>
+   ${open.length ? open.map(t => `<div class="item"><span class="pill ${pill(t.when)}">${esc(t.when === "This week" ? "Due soon" : t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)}</small></div><button class="btn primary" type="button" data-a="doTask" data-key="${esc(t.key)}">Do it</button></div>`).join("") : '<div class="item"><div class="t">All clear for today.</div></div>'}
   </div>`);
   defaults();
 }
-ACT.chase = () => { me("Chase Arjun"); chase(); };
-ACT.letter = () => { me("Draft Sneha's letter"); letter(); };
-ACT.probation = () => { me("Start Priya's probation review"); probation(); };
-ACT.noop = () => say("In the full product this opens the draft for editing.");
+ACT.doTask = b => runTask(b.dataset.key, true);
+function runTask(key, echo) {
+  const t = task(key); if (!t) return;
+  if (t.done) return say(`"${esc(t.title)}" is already done.`);
+  if (key.startsWith("approval:")) { if (echo) me(t.title); return mode === "lead" ? reviewPending(Number(key.split(":")[1])) : say("Approvals go straight out in Solo setup."); }
+  const map = { chase: ["Chase Arjun", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Reject candidates who failed the test", bulk],
+    laptop: ["Remind Suresh about Sneha's laptop", remindIT], kiranLetter: ["Draft Kiran's appointment letter", kiranLetter], kiranLaptop: ["Remind Suresh about Kiran's laptop", remindIT] };
+  const m = map[key]; if (!m) return say("I can't do that one yet in this preview.");
+  if (echo) me(m[0]); m[1]();
+}
 
 function chase() {
-  if (S.done.chase) return say("Already chased. I'll escalate to Vikram at 4 pm if Arjun stays silent.");
-  S.done.chase = 1;
+  if (D.done.chase) return say("Already chased. I'll escalate to Vikram at 4 pm if Arjun stays silent.");
+  D.done.chase = 1; task("chase").ctx = "Nudged on WhatsApp · escalates to Vikram at 4 pm"; paint();
   later(() => {
-    say(`Done. I sent Arjun a WhatsApp nudge with one-tap scoring. If he doesn't reply, I'll escalate to Vikram (Head of Engineering) at 4 pm.<div class="why" style="margin-top:6px">Why it matters: candidates who wait more than 3 days for an update often take another offer.</div>`);
-    wa("Arjun (interviewer)", "Feedback pending for <b>Ankit Verma</b>, Backend Developer, interviewed yesterday. Reply with a score, or tap:",
+    say(`Done. I sent Arjun Mehta a WhatsApp nudge with one-tap scoring. If he doesn't reply, I'll escalate to Vikram (Head of Engineering) at 4 pm.<div class="why" style="margin-top:6px">Why it matters: candidates who wait more than 3 days for an update often take another offer.</div>`);
+    wa("Arjun Mehta (interviewer)", "Feedback pending for <b>Ankit Verma</b> and <b>Lakshmi R.</b>, Backend Developer, interviewed yesterday. Reply with a score, or tap:",
       [["Ankit: 4/5, strong APIs, weak SQL. Next round.", feedback], ["Ankit: 2/5, not a fit", feedbackNo]]);
     chips([["Show my pipeline", pipeline], ["Draft Sneha's letter", letter]]);
   });
 }
+function feedbackIn() { closeTask("chase"); ["Ankit Verma", "Lakshmi R."].forEach(n => { const p = person(n); p.late = false; p.where = "Feedback in"; }); }
 function feedback() {
-  S.late = Math.max(0, S.late - 1); paint();
+  feedbackIn(); paint();
   desk(`<div class="bubble">Arjun replied on WhatsApp. I turned it into a scorecard:</div>
   <div class="card"><h4><span class="kind">Scorecard</span>Ankit Verma · Backend Developer <span class="pill p-ok">Feedback in</span></h4><div class="c">
   <table><tr><th>Criterion</th><th>Score</th></tr><tr><td>API design</td><td>4 / 5</td></tr><tr><td>SQL</td><td>2 / 5</td></tr><tr><td>Overall</td><td>4 / 5</td></tr></table>
   <div class="row"><span class="note">Arjun recommends: next round</span><span class="spacer"></span><button class="btn" type="button" data-a="rejectOne">Reject with reason</button><button class="btn primary" type="button" data-a="advance" data-once>Move to Round 2</button></div></div></div>`);
 }
-function feedbackNo() { S.late = Math.max(0, S.late - 1); paint(); say("Arjun scored Ankit 2/5, not a fit. Want me to draft a rejection with a job-relevant reason?"); chips([["Yes, draft it", bulk]]); }
+function feedbackNo() { feedbackIn(); person("Ankit Verma").where = "Scored 2/5"; paint(); say("Arjun scored Ankit 2/5, not a fit. Want me to draft a rejection with a job-relevant reason?"); chips([["Yes, draft it", () => reasonPicker("Ankit Verma")]]); }
 ACT.advance = b => {
+  const p = person("Ankit Verma"), prev = p.where; p.where = "Round 2 with Head of Engineering"; paint();
   const d = say(`Moved Ankit to Round 2 and drafted his update: <i>"Round 2 with the Head of Engineering. You'll hear from us by Thu 19 Nov."</i> <span class="undo">· <button class="link" type="button">Undo</button> (10 min)</span>`);
-  const u = d.querySelector(".undo button"); const t = setTimeout(() => d.querySelector(".undo")?.remove(), 10 * 60 * 1000);
-  u.onclick = () => { clearTimeout(t); d.querySelector(".undo").remove(); b.disabled = false; say("Undone. Ankit is back in Round 1 and no update was sent."); };
+  const t = setTimeout(() => d.querySelector(".undo")?.remove(), 10 * 60 * 1000);
+  d.querySelector(".undo button").onclick = () => { clearTimeout(t); d.querySelector(".undo").remove(); b.disabled = false; p.where = prev; paint(); say("Undone. Ankit is back where he was and no update was sent."); };
 };
 ACT.rejectOne = () => reasonPicker("Ankit Verma");
 
 const REASONS = [["skills_gap", "Skills don't match the role's must-haves"], ["assessment_below_bar", "Assessment score below the bar"], ["experience_mismatch", "Experience level doesn't match"],
   ["salary_mismatch", "Salary expectation outside the budget"], ["location_mismatch", "Location or work mode doesn't fit"], ["notice_period", "Notice period too long"], ["role_filled", "Role has been filled"]];
 function reasonPicker(name) {
-  desk(`<div class="card"><h4><span class="kind">Rejection</span>${esc(name)}</h4><div class="c">
-   <label class="field" for="rr">Reason (job-relevant only)<select id="rr">${REASONS.map(r => `<option value="${r[0]}">${r[1]}</option>`).join("")}</select></label>
+  desk(`<div class="card draft" data-name="${esc(name)}"><h4><span class="kind">Rejection</span>${esc(name)}</h4><div class="c">
+   <label class="field" for="rr${uid}">Reason (job-relevant only)<select id="rr${uid}">${REASONS.map(r => `<option value="${r[0]}">${r[1]}</option>`).join("")}</select></label>
    <div class="why">Reasons come from a fixed list. Text about age, gender, marital status, religion, caste or pregnancy is blocked.</div>
-   <div class="row"><button class="btn primary" type="button" data-a="sendReject">Approve &amp; send</button></div></div></div>`);
+   <div class="row"><button class="btn primary" type="button" data-a="sendReject">Approve &amp; send</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`);
 }
-ACT.sendReject = b => { const r = b.closest(".card").querySelector("select"); const label = r.options[r.selectedIndex].text; approve(b, `a rejection note to Ankit (${label.toLowerCase()})`, () => say("Sent. Ankit's status page is closed with that reason.")); };
+ACT.sendReject = b => {
+  const card = b.closest(".card"), r = card.querySelector("select"), label = r.options[r.selectedIndex].text, name = card.dataset.name;
+  approve(b, `a rejection note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Rejected"; p.where = `Rejected: ${label.toLowerCase()}`; } say(`Sent. ${esc(name)}'s status page is closed with that reason.`); });
+};
 
 function letter() {
-  if (S.done.letter) return say("Sneha's letter is already handled.");
-  S.done.letter = 1;
+  if (D.done.letter) return say("Sneha's letter is already handled.");
+  D.done.letter = 1;
   later(() => desk(`<div class="bubble">Here's Sneha's appointment letter, filled from her accepted offer.</div>
   <div class="card draft"><h4><span class="kind">Approval</span>Appointment letter · Sneha Rao <span class="pill p-acc">Draft</span></h4><div class="c">
   <div class="doc">Dear Sneha,
@@ -301,47 +281,77 @@ Notice period: 30 days after confirmation …</div>
   <div class="why">Filled from the offer approved on 2 Nov. Template from the Clearstage playbook. Not legal advice.</div>
   <div class="row"><button class="btn primary" type="button" data-a="sendLetter">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div></div></div>`));
 }
+ACT.noop = () => say("Editing drafts isn't in this preview yet. In the full product this opens the draft for editing.");
 ACT.rejectDraft = b => { b.closest(".card").querySelectorAll("button").forEach(x => x.disabled = true); say("Draft discarded. Nothing was sent."); };
-ACT.sendLetter = b => approve(b, "Sneha's appointment letter", () => { S.late = Math.max(0, S.late - 1); S.joiners[0].letter = "sent"; paint(); say("Sent to Sneha for e-acknowledgement. Her joiner checklist is on track for Monday."); });
+ACT.sendLetter = b => approve(b, "Sneha's appointment letter", () => {
+  closeTask("letter"); const s = person("Sneha Rao"); s.checklist[1].done = true;
+  say("Sent to Sneha for e-acknowledgement. Her joiner checklist is on track for Monday.");
+});
+function remindIT() {
+  const kiran = !task("laptop") || task("laptop").done ? true : false;
+  const who = task("laptop") && !task("laptop").done ? "Sneha" : "Kiran";
+  say(`I sent Suresh (IT) a WhatsApp reminder for ${who}'s laptop and email.`);
+  wa("Suresh (IT)", `Reminder: laptop and email for <b>${who}</b> before Day 1.`, [["Done, ready", () => {
+    closeTask(who === "Sneha" ? "laptop" : "kiranLaptop");
+    const p = person(who === "Sneha" ? "Sneha Rao" : "Kiran S."); const c = p.checklist?.find(x => x.t === "Laptop and email"); if (c) c.done = true;
+    paint(); say(`Suresh confirmed ${who}'s laptop and email are ready.`);
+  }]]);
+  void kiran;
+}
 
-function hire() { later(() => { say("Got it: 2 Sales Executives in Pune, ₹4–5 L. Two quick questions so I set this up right. How much experience?"); chips([["1–3 years", hire2], ["Freshers are fine", hire2]]); }); }
-function hire2() { later(() => { say("When do you need them to start?"); chips([["Within 30 days", hire3], ["Within 60 days", hire3]]); }); }
-function hire3() {
-  later(() => {
-    desk(`<div class="bubble">Here's the role. I used the Sales Executive preset.</div>
-  <div class="card draft"><h4><span class="kind">Approval</span>Sales Executive · Pune · 2 openings <span class="pill p-acc">Needs approval</span></h4><div class="c">
-  <table><tr><td>Budget</td><td>₹4–5 L CTC each</td></tr><tr><td>Stages</td><td>Screen call → Role-play → Manager → Offer</td></tr><tr><td>Job description</td><td>Drafted (B2B fintech sales, field + inside)</td></tr><tr><td>Target fill date</td><td>Thu 10 Dec 2026</td></tr></table>
+/* ----- hiring: create a role from what the user actually said ----- */
+let draftRole = null;
+function hireFrom(text) {
+  const r = parseHire(text);
+  if (!r) return honest();
+  draftRole = { title: r.title, count: r.count, city: r.city, budget: r.budget, exp: null, start: null };
+  later(askRoleGaps);
+}
+function askRoleGaps() {
+  const d = draftRole;
+  const parts = [`${d.count ?? "?"} × ${esc(d.title)}`, d.city ? esc(d.city) : null, d.budget ? fmtBudget(d.budget) : null].filter(Boolean).join(", ");
+  if (d.count == null) { say(`Got it: <b>${parts}</b>. How many people do you need?`); return chips([["1", () => fill("count", 1)], ["2", () => fill("count", 2)], ["3", () => fill("count", 3)]]); }
+  if (!d.city) { say(`Got it: <b>${parts}</b>. Which city?`); return chips([["Hyderabad", () => fill("city", "Hyderabad")], ["Bengaluru", () => fill("city", "Bengaluru")], ["Pune", () => fill("city", "Pune")], ["Remote", () => fill("city", "Remote")]]); }
+  if (!d.budget) { say(`Got it: <b>${parts}</b>. What's the CTC budget per person?`); return chips([["₹4–6 L", () => fill("budget", { min: 4, max: 6 })], ["₹6–10 L", () => fill("budget", { min: 6, max: 10 })], ["₹10–15 L", () => fill("budget", { min: 10, max: 15 })]]); }
+  if (!d.exp) { say(`Got it: <b>${parts}</b>. How much experience?`); return chips([["Freshers are fine", () => fill("exp", "Freshers are fine")], ["1–3 years", () => fill("exp", "1–3 years")], ["3–6 years", () => fill("exp", "3–6 years")]]); }
+  if (!d.start) { say("When do you need them to start?"); return chips([["Within 30 days", () => fill("start", 30)], ["Within 60 days", () => fill("start", 60)]]); }
+  roleCard();
+}
+function fill(k, v) { draftRole[k] = v; later(askRoleGaps, 250); }
+function roleCard() {
+  const d = draftRole;
+  desk(`<div class="bubble">Here's the role. Check it, then send it for approval.</div>
+  <div class="card draft"><h4><span class="kind">Approval</span>${esc(d.title)} · ${esc(d.city)} · ${d.count} opening${d.count > 1 ? "s" : ""} <span class="pill p-acc">Needs approval</span></h4><div class="c">
+  <table><tr><td>Budget</td><td>${fmtBudget(d.budget)} CTC each</td></tr><tr><td>Experience</td><td>${esc(d.exp)}</td></tr><tr><td>Stages</td><td>Applied → Screened → Interview → Offer</td></tr><tr><td>Start</td><td>Within ${d.start} days</td></tr><tr><td>Job description</td><td>Draft ready to review</td></tr></table>
   <div class="row"><button class="btn primary" type="button" data-a="sendRole" data-once>Send for approval on WhatsApp</button><button class="btn" type="button" data-a="noop">Edit JD</button></div></div></div>`);
-    defaults();
-  });
+  defaults();
 }
 ACT.sendRole = () => {
+  const d = { ...draftRole };
   say(`Sent to ${esc(phoneLabel())} on WhatsApp. One word approves it.`);
-  wa(phoneLabel(), "New role to approve: <b>2 × Sales Executive, Pune</b>, ₹4–5 L each, start within 30 days. Reply YES to approve.", [
-    ["YES", () => { addSalesRole(2); logApproval("Sales Executive role", first()); say(`<span class="pill p-ok">Approved by ${esc(first())}</span> The role is live. I'll acknowledge every applicant within 24 hours.`); }],
-    ["Make it 1 opening", () => { addSalesRole(1); logApproval("Sales Executive role (1 opening)", first()); say("Approved with 1 opening instead of 2. I've updated the role and it's live."); }]]);
+  wa(phoneLabel(), `New role to approve: <b>${d.count} × ${esc(d.title)}, ${esc(d.city)}</b>, ${fmtBudget(d.budget)} each, start within ${d.start} days. Reply YES to approve.`, [
+    ["YES", () => { addRole(d, d.count); logApproval(`${d.title} role`, first()); paint(); say(`<span class="pill p-ok">Approved by ${esc(first())}</span> ${esc(d.title)} is live. I'll acknowledge every applicant within 24 hours.`); }],
+    ...(d.count > 1 ? [["Make it 1 opening", () => { addRole(d, 1); logApproval(`${d.title} role (1 opening)`, first()); paint(); say("Approved with 1 opening. I've updated the role and it's live."); }]] : [])]);
 };
+function addRole(d, n) { D.roles.push({ id: id(), title: d.title, city: d.city, openings: n, days: 0, budget: fmtBudget(d.budget), status: "Open" }); }
 
-function addSalesRole(n) {
-  if (S.rolesList.some(r => r.title === "Sales Executive")) return;
-  S.roles++; S.rolesList.push({ title: "Sales Executive", city: "Pune", openings: n, days: 0, budget: "₹4–5 L", funnel: [0, 0, 0, 0], status: "Open", note: "Just approved" });
-  paint();
-}
-function pipeline() {
+function pipeline(rid = 1) {
+  const r = roleOf(rid), c = stageCounts(rid);
+  const col = st => { const ps = D.people.filter(p => p.role === rid && p.stage === st); return `<div class="col"><h5>${st} · ${ps.length}</h5>${ps.slice(0, 3).map(p => `<button class="cand${p.name === "Kiran S." && st === "Offer" ? " hot" : ""}" type="button" data-cand="${esc(p.name)}">${esc(p.name)}</button>`).join("")}${ps.length > 3 ? `<span class="note">+${ps.length - 3} more</span>` : ""}</div>`; };
   later(() => {
-    desk(`<div class="bubble">Backend Developer pipeline. Tap a candidate.</div>
-  <div class="card"><h4><span class="kind">Pipeline</span>Backend Developer · 21 days open <span class="pill p-warn">1 offer pending</span></h4><div class="c"><div class="board">
-  <div class="col"><h5>Applied · 12</h5><button class="cand" type="button" data-a="noop">Farah K.</button><button class="cand" type="button" data-a="noop">Dev P.</button><span class="note">+10 more</span></div>
-  <div class="col"><h5>Screened · 5</h5><button class="cand" type="button" data-a="noop">Neha J.</button><button class="cand" type="button" data-a="noop">Rohan M.</button><span class="note">+3 more</span></div>
-  <div class="col"><h5>Interview · 3</h5><button class="cand" type="button" data-a="noop">Ankit V.</button><button class="cand" type="button" data-a="noop">Lakshmi R.</button><button class="cand" type="button" data-a="noop">Sameer T.</button></div>
-  <div class="col"><h5>Offer · 1</h5><button class="cand hot" type="button" data-a="offer">Kiran S. → build offer</button></div>
-  </div></div></div>`);
+    const d = desk(`<div class="bubble">${esc(r.title)} pipeline. Tap a candidate.</div>
+    <div class="card"><h4><span class="kind">Pipeline</span>${esc(r.title)} · ${r.days} days open <span class="pill ${c.Offer ? "p-warn" : "p-acc"}">${c.Offer ? c.Offer + " offer pending" : r.status}</span></h4><div class="c"><div class="board">${["Applied", "Screened", "Interview", "Offer"].map(col).join("")}</div></div></div>`);
+    d.querySelectorAll("[data-cand]").forEach(b => b.onclick = () => openCandidate(b.dataset.cand));
     chips([["Build Kiran's offer", offer], ["Reject candidates who failed the test", bulk]]);
   });
 }
-ACT.offer = () => { me("Build Kiran's offer"); offer(); };
+function openCandidate(name) {
+  me(`Open ${name}`);
+  if (name === "Kiran S." && !D.done.offerSent) return offer();
+  if (["Ankit Verma", "Lakshmi R."].includes(name) && !task("chase").done) return chase();
+  const p = person(name); say(`<b>${esc(name)}</b> · ${esc(roleOf(p.role)?.title || "")} · ${esc(p.stage)}: ${esc(p.where)}. Owner: ${esc(ownerName(p.owner))}.`);
+}
 
-// Kiran's offer: ₹12 L, deliberately failing the 50% wages check (seed data)
 const KIRAN = [
   { name: "Basic + DA", kind: "basic", amount: 420000 }, { name: "HRA", kind: "hra", amount: 210000 },
   { name: "Special allowance", kind: "special", amount: 510000 }, { name: "Employer PF", kind: "employer_pf", amount: 60000 }];
@@ -352,106 +362,233 @@ function ctcBlock(comps) {
   <div class="why">Calculated by fixed rules, not AI. Rule: ${esc(r.rule.citation)}. Status: ${esc(r.rule.status)}. Not legal advice.</div>`;
 }
 function offer() {
+  if (D.done.offerSent) return say("Kiran's offer has already gone out.");
   later(() => desk(`<div class="bubble">Kiran's offer at ₹12 L. I checked the structure before anything goes out.</div>
   <div class="card draft"><h4><span class="kind">Offer · CTC</span>Kiran S. · Backend Developer <span class="pill p-late">Check failed</span></h4><div class="c">${ctcBlock(KIRAN)}
   <div class="row"><button class="btn primary" type="button" data-a="fixCtc" data-once>Fix the structure for me</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
 }
 ACT.fixCtc = b => {
-  const card = b.closest(".card"), c = b.closest(".c"); const fixed = fixStructure(KIRAN);
-  c.innerHTML = ctcBlock(fixed) + `<div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve &amp; send offer</button></div>`;
+  const card = b.closest(".card"), c = b.closest(".c");
+  c.innerHTML = ctcBlock(fixStructure(KIRAN)) + `<div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve &amp; send offer</button></div>`;
   bind(c); card.querySelector("h4 .pill").outerHTML = '<span class="pill p-ok">Check passed</span>';
 };
-ACT.sendOffer = b => approve(b, "Kiran's offer letter", () => { say("Offer sent to Kiran, valid for 3 days. I'll remind him on day 2."); chips([["Kiran accepted the offer", accepted], ["Show my pipeline", pipeline]]); });
+ACT.sendOffer = b => approve(b, "Kiran's offer letter", () => {
+  D.done.offerSent = 1; closeTask("offer"); person("Kiran S.").where = "Offer sent · valid 3 days";
+  say("Offer sent to Kiran, valid for 3 days. I'll remind him on day 2."); chips([["Kiran accepted the offer", accepted], ["Show my pipeline", () => pipeline()]]);
+});
 
 function accepted() {
-  if (S.done.accepted) return say("Kiran's onboarding has already started. See Joiners & probation.");
-  S.done.accepted = 1;
-  S.join++; S.joiners.push({ name: "Kiran S.", role: "Backend Developer", day1: "Mon 30 Nov", letter: "due 25 Nov", it: "requested" });
-  const be = S.rolesList[0]; be.funnel[3] = 0; be.status = "Filled"; be.note = "Kiran joins 30 Nov"; S.roles = Math.max(0, S.roles - 1);
+  if (!D.done.offerSent) return say("Kiran doesn't have an offer yet. Want me to build it?") && chips([["Build Kiran's offer", offer]]);
+  if (D.done.accepted) return say("Kiran's onboarding has already started. See Joiners & probation.");
+  D.done.accepted = 1;
+  const k = person("Kiran S."); Object.assign(k, { type: "Joiner", stage: "Hired", roleTitle: "Backend Developer", where: "Joins Mon 30 Nov", day1: "Mon 30 Nov",
+    checklist: [{ t: "Documents uploaded", done: true }, { t: "Appointment letter", done: false }, { t: "Laptop and email", done: false }, { t: "Day 1 plan and buddy", done: false }],
+    probation: { ends: "Sun 30 May 2027", manager: "Arjun Mehta", status: "Scheduled 14 May 2027" } });
+  const be = roleOf(1); be.status = "Filled";
+  D.tasks.push({ id: id(), key: "kiranLetter", title: "Kiran's appointment letter", ctx: "Due Wed 25 Nov · joins Mon 30 Nov", owner: "hr", when: "This week", done: false },
+    { id: id(), key: "kiranLaptop", title: "Laptop and email for Kiran", ctx: "Due Fri 27 Nov", owner: "Suresh (IT)", when: "This week", done: false });
   paint();
   later(() => {
     desk(`<div class="bubble">Kiran accepted. I created his employee record and started onboarding. Joining Mon 30 Nov.</div>
   <div class="card"><h4><span class="kind">Joiner checklist</span>Kiran S. · Day 1 on Mon 30 Nov <span class="pill p-acc">On track</span></h4>
    <div class="item"><span class="pill p-ok">Done</span><div class="t">Document upload link sent to Kiran<small>PAN, Aadhaar (masked), education, last payslip · consent recorded</small></div></div>
-   <div class="item"><span class="pill p-warn">Due 25 Nov</span><div class="t">Appointment letter<small>Owner: you</small></div><button class="btn" type="button" data-a="noop">Draft now</button></div>
+   <div class="item"><span class="pill p-warn">Due 25 Nov</span><div class="t">Appointment letter<small>Owner: ${esc(ownerName("hr"))}</small></div><button class="btn" type="button" data-a="kiranLetter">Draft now</button></div>
    <div class="item"><span class="pill p-warn">Due 27 Nov</span><div class="t">Laptop and email account<small>Owner: Suresh (IT) · reminder set on WhatsApp</small></div></div>
-   <div class="item"><span class="pill p-acc">Planned</span><div class="t">Day 1 plan and buddy (Arjun)<small>30-60-90 plan from the playbook</small></div></div>
-   <div class="item"><span class="pill p-acc">Scheduled</span><div class="t">Probation review with Arjun, due 14 May 2027<small>15 days before the 6-month end date</small></div></div>
+   <div class="item"><span class="pill p-acc">Planned</span><div class="t">Day 1 plan and buddy (Arjun Mehta)<small>30-60-90 plan from the playbook</small></div></div>
+   <div class="item"><span class="pill p-acc">Scheduled</span><div class="t">Probation review with Arjun Mehta, due 14 May 2027<small>15 days before the 6-month end date</small></div></div>
   </div><div class="why">From offer accepted to Day 1 to confirmation: one record, nothing re-entered.</div>`);
-    wa("Suresh (IT)", "New joiner <b>Kiran S.</b> on Mon 30 Nov. Laptop and email needed by Fri 27 Nov.", [["Will do", () => say("Suresh confirmed the laptop and email for Kiran.")]]);
+    wa("Suresh (IT)", "New joiner <b>Kiran S.</b> on Mon 30 Nov. Laptop and email needed by Fri 27 Nov.", [["Will do", () => say("Suresh confirmed he'll have Kiran's laptop and email ready.")]]);
     defaults();
   });
 }
+ACT.kiranLetter = () => { me("Draft Kiran's appointment letter"); kiranLetter(); };
+function kiranLetter() {
+  if (D.done.kiranLetter) return say("Kiran's letter is already drafted.");
+  D.done.kiranLetter = 1;
+  later(() => desk(`<div class="card draft"><h4><span class="kind">Approval</span>Appointment letter · Kiran S. <span class="pill p-acc">Draft</span></h4><div class="c">
+  <div class="doc">Dear Kiran,
+We are pleased to appoint you as Backend Developer at Acme Fintech Pvt Ltd, effective Mon 30 Nov 2026.
+CTC: ₹12,00,000 per year (breakdown in Annexure A). Probation: 6 months …</div>
+  <div class="row"><button class="btn primary" type="button" data-a="sendKiranLetter">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
+}
+ACT.sendKiranLetter = b => approve(b, "Kiran's appointment letter", () => { closeTask("kiranLetter"); person("Kiran S.").checklist[1].done = true; say("Sent to Kiran for e-acknowledgement."); });
 
 function bulk() {
+  if (D.done.bulk) return say("Those 4 rejection notes have already gone out.");
   later(() => desk(`<div class="bubble">4 candidates scored below 60% on the Excel assessment for Operations Analyst. Here's the draft, with a job-relevant reason for each.</div>
   <div class="card draft"><h4><span class="kind">Bulk preview</span>Reject 4 · Operations Analyst <span class="pill p-acc">Preview</span></h4>
-   <div class="item"><div class="t">Megha D. · 48%</div></div><div class="item"><div class="t">Imran S. · 52%</div></div><div class="item"><div class="t">Tarun B. · 41%</div></div><div class="item"><div class="t">Pooja N. · 55%</div></div>
+   ${D.people.filter(p => p.failed).map(p => `<div class="item"><div class="t">${esc(p.name)} · ${p.score}%</div></div>`).join("")}
    <div class="c"><div class="doc">Hi {name}, thank you for your time with Acme Fintech. We won't move forward with your application for Operations Analyst. The role needs advanced Excel modelling, and your assessment score ({score}) was below the 60% we need. We'd welcome an application for future roles.</div>
    <div class="why">Reason: assessment score below the bar. Reasons come from a fixed job-relevant list.</div>
    <div class="row"><button class="btn primary" type="button" data-a="sendBulk">Send all 4</button><button class="btn" type="button" data-a="noop">Review each</button></div></div></div>`));
 }
-ACT.sendBulk = b => approve(b, "4 rejection notes", () => say("Sent. All 4 status pages are closed with a reason. Candidates told within 7 days this week: 100%."));
+ACT.sendBulk = b => approve(b, "4 rejection notes", () => {
+  D.done.bulk = 1; closeTask("bulk");
+  D.people.filter(p => p.failed).forEach(p => { p.stage = "Rejected"; p.where = "Rejected: assessment below 60%"; });
+  say("Sent. All 4 status pages are closed with a reason. Candidates told within 7 days this week: 100%.");
+});
 
 function probation() {
-  if (S.done.prob) return say("Priya's review is already with Vikram.");
-  S.done.prob = 1; S.probation[0].status = "with manager"; paint();
+  if (D.done.prob) return say("Priya's review is already with Vikram.");
+  D.done.prob = 1; const pr = person("Priya Nair"); pr.probation.status = "With Vikram"; pr.where = "Review with Vikram, due Sat 14 Nov";
+  const t = task("probation"); t.title = "Vikram to review Priya's probation"; t.owner = "Vikram"; t.ctx = "3-question review sent on WhatsApp · due Sat 14 Nov"; paint();
   later(() => {
     say("I sent Vikram, Priya's manager, a 3-question review on WhatsApp, due in 3 days. I'll escalate if it slips.");
-    wa("Vikram (manager)", "Priya Nair's probation ends on 23 Nov. Your call:", [
+    wa("Vikram (manager)", "Priya Nair's probation ends on Mon 23 Nov. Your call:", [
       ["Confirm Priya", () => desk(`<div class="bubble">Vikram recommends confirming Priya. Here's the letter.</div>
        <div class="card draft"><h4><span class="kind">Approval</span>Confirmation letter · Priya Nair <span class="pill p-acc">Draft</span></h4><div class="c"><div class="doc">Dear Priya,
 We are happy to confirm your employment as Customer Success Associate with effect from 23 Nov 2026 …</div>
        <div class="row"><button class="btn primary" type="button" data-a="sendConf">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`)],
-      ["Extend by 3 months", () => { S.probation[0].status = "extended"; S.prob = Math.max(0, S.prob - 1); paint(); say("Vikram wants an extension. I'll draft the extension letter with his reasons and set a new review date."); }]]);
+      ["Extend by 3 months", () => { pr.probation.status = "Extended"; pr.where = "Probation extended by 3 months"; closeTask("probation"); paint(); say("Vikram wants an extension. I'll draft the extension letter with his reasons and set a new review date."); }]]);
   });
 }
-ACT.sendConf = b => approve(b, "Priya's confirmation letter", () => { S.prob = Math.max(0, S.prob - 1); S.probation[0].status = "confirmed"; paint(); say("Sent. Priya acknowledged it."); });
+ACT.sendConf = b => approve(b, "Priya's confirmation letter", () => { const pr = person("Priya Nair"); pr.probation.status = "Confirmed"; pr.where = "Confirmed from 23 Nov"; closeTask("probation"); say("Sent. Priya acknowledged it."); });
 
 function wrap() {
+  const open = D.tasks.filter(t => !t.done), late = open.filter(t => t.when === "Late").length;
   later(() => desk(`<div class="bubble">Here's your day.</div>
   <div class="card"><h4><span class="kind">End of day</span>${new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</h4>
-   <div class="item"><span class="pill p-ok">Approved</span><div class="t">${audit.length} item${audit.length === 1 ? "" : "s"} approved today<small>${audit.length ? audit.map(a => esc(a.what) + " by " + esc(a.by)).join(" · ") : "Nothing approved yet"}</small></div></div>
-   <div class="item"><span class="pill ${S.late ? "p-late" : "p-ok"}">${S.late ? "Late" : "Clear"}</span><div class="t">${S.late} late item${S.late === 1 ? "" : "s"} left<small>${S.late ? "I'll put them first in tomorrow's brief." : "Nothing is late."}</small></div></div>
+   <div class="item"><span class="pill p-ok">Approved</span><div class="t">${D.audit.length} item${D.audit.length === 1 ? "" : "s"} approved today<small>${D.audit.length ? D.audit.map(a => esc(a.what) + " by " + esc(a.by)).join(" · ") : "Nothing approved yet"}</small></div></div>
+   <div class="item"><span class="pill ${late ? "p-late" : "p-ok"}">${late ? "Late" : "Clear"}</span><div class="t">${open.length} open task${open.length === 1 ? "" : "s"}, ${late} late<small>${late ? "I'll put the late ones first in tomorrow's brief." : "Nothing is late."}</small></div></div>
   </div>`));
 }
 
+/* ----- understanding the user: act only when clear, otherwise say so ----- */
 function blocked(s) { return /\b(age|old|young|gender|female|male|woman|women|man|married|marital|single|pregnan\w*|religio\w*|hindu|muslim|christian|caste|kids?|children)\b/i.test(s); }
-
+function honest() {
+  later(() => {
+    say(`I can't do that yet in this preview. Right now I can: show today's work, chase late feedback, create a new role, show a pipeline, build Kiran's offer, send rejection notes, draft Sneha's letter and start Priya's probation review. The full Desk agent will understand much more.`);
+    defaults();
+  });
+}
 function route(t) {
   const s = t.toLowerCase();
-  if (/reject|nahi lena|drop/.test(s) && blocked(s)) {
-    say("I can't use that as a rejection reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period. Want me to pick a job-relevant reason?");
+  if (/\b(reject|nahi lena|drop)\b/.test(s) && blocked(s)) {
+    say("I can't use that as a rejection reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period.");
     return chips([["Show job-relevant reasons", () => reasonPicker("this candidate")]]);
   }
-  if (/\barjun\b/.test(s) && /\b(rao|mehta)\b/.test(s) === false && /reject|offer|move/.test(s)) {
-    say("Do you mean Arjun Rao (candidate, Operations Analyst) or Arjun Mehta (interviewer)?");
-    return chips([["Arjun Rao", () => say("Got it, Arjun Rao. What should I do with his application?")], ["Arjun Mehta", chase]]);
+  if (/\barjun\b/.test(s) && !/\b(rao|mehta)\b/.test(s) && !/\bchase\b/.test(s)) {
+    say("Do you mean Arjun Mehta (interviewer) or Arjun Rao (candidate, Customer Success Associate)?");
+    return chips([["Arjun Mehta", chase], ["Arjun Rao", () => openCandidateNoEcho("Arjun Rao")]]);
   }
-  if (/chase|feedback|arjun/.test(s)) return chase();
-  if (/sneha|appointment|letter/.test(s)) return letter();
-  if (/hire|sales|role|opening|chahiye|karna hai/.test(s)) return hire();
-  if (/pipeline|board|candidates?$/.test(s)) return pipeline();
-  if (/reject|failed/.test(s)) return bulk();
-  if (/kiran|offer|ctc|salary structure/.test(s)) return offer();
-  if (/accept/.test(s)) return accepted();
-  if (/probation|priya|confirm/.test(s)) return probation();
-  if (/wrap|end of day|summary|aaj kya hua/.test(s)) return wrap();
-  if (/today|brief|morning|kya hai|aaj/.test(s)) return brief();
-  later(() => { say(`I didn't catch that one yet. Try a suggestion below, or something like <i>"Pune mein 2 sales execs hire karna hai"</i>.`); defaults(); });
+  const hire = parseHire(t);
+  if (hire) { draftRole = { title: hire.title, count: hire.count, city: hire.city, budget: hire.budget, exp: null, start: null }; return later(askRoleGaps); }
+  if (/\bchase\b|\bfeedback\b|\barjun mehta\b/.test(s)) return chase();
+  if (/\bsneha\b|\bappointment letter\b/.test(s)) return letter();
+  if (/\bpipeline\b|\bboard\b/.test(s)) return pipeline();
+  if (/\breject\b.*\b(failed|test|assessment)\b|\bfailed the test\b/.test(s)) return bulk();
+  if (/\bkiran\b.*\baccept/.test(s)) return accepted();
+  if (/\bkiran\b|\boffer\b|\bctc\b/.test(s)) return offer();
+  if (/\bprobation\b|\bpriya\b/.test(s)) return probation();
+  if (/\bwrap\b|\bend of (the )?day\b|\baaj kya hua\b/.test(s)) return wrap();
+  if (/\btoday\b|\bbrief\b|\bmorning\b|\bkya hai\b|\bwhat'?s on\b/.test(s)) return brief();
+  if (/\b(laptop|suresh)\b/.test(s)) return remindIT();
+  return honest();
 }
+function openCandidateNoEcho(name) { const p = person(name); say(`<b>${esc(name)}</b> · ${esc(roleOf(p.role)?.title || "")} · ${esc(p.stage)}: ${esc(p.where)}. Owner: ${esc(ownerName(p.owner))}.`); }
 
-$("#ask").addEventListener("submit", e => { e.preventDefault(); const v = $("#q").value.trim(); if (!v) return; me(v); $("#q").value = ""; route(v); });
+$("#ask").addEventListener("submit", e => { e.preventDefault(); const v = $("#q").value.trim(); if (!v) return; if (currentTab !== "desk") location.hash = "desk"; me(v); $("#q").value = ""; route(v); });
 $("#file").addEventListener("change", e => {
   const f = e.target.files[0]; if (!f) return; e.target.value = "";
   me(`Uploaded ${f.name}`);
-  later(() => desk(`<div class="bubble">Got <b>${esc(f.name)}</b>. Which role is this CV for?</div>`) && chips([["Backend Developer", () => say("Added to Backend Developer as Applied. In the full product I read the CV and fill in the details; here it's a placeholder record.")], ["Operations Analyst", () => say("Added to Operations Analyst as Applied.")]]));
+  later(() => { desk(`<div class="bubble">Got <b>${esc(f.name)}</b>. Reading CVs isn't in this preview yet, so I'll add a placeholder record. Which role is it for?</div>`);
+    chips(D.roles.filter(r => r.status === "Open").slice(0, 4).map(r => [r.title, () => { D.people.push({ id: id(), name: f.name.replace(/\.[^.]+$/, ""), type: "Candidate", role: r.id, stage: "Applied", where: "Uploaded CV, not yet read", owner: "hr" }); paint(); say(`Added to ${esc(r.title)} as Applied. Consent is recorded at upload.`); }])); });
 });
-$("#m-solo").onclick = () => { S.mode = "solo"; paint(); say("Switched to <b>Solo</b>. You own everything, and what you approve goes out straight away."); };
-$("#m-lead").onclick = () => { S.mode = "lead"; paint(); say(`Switched to <b>Lead + juniors</b>. You're now acting as Ritu, a junior. Anything that reaches a candidate or employee goes to ${esc(first())} for one-tap approval on WhatsApp.`); };
-$("#restart").onclick = () => init();
-$("#waToggle").onclick = () => { const w = $("#wa"); w.classList.add("open"); $("#waToggle").setAttribute("aria-expanded", "true"); $("#waToggle").textContent = "WhatsApp"; };
+$("#m-solo").onclick = () => { if (mode === "solo") return; mode = "solo"; paint(); say("Switched to <b>Solo</b>. You own everything, and what you approve goes out straight away."); };
+$("#m-lead").onclick = () => { if (mode === "lead") return; mode = "lead"; paint(); say(`Switched to <b>Lead + juniors</b>. You're now acting as Ritu, a junior. Anything that reaches a candidate or employee goes to ${esc(first())} for one-tap approval, in the app or on WhatsApp.`); };
+$("#restart").onclick = () => { init(); location.hash = "desk"; };
+$("#waToggle").onclick = () => { $("#wa").classList.add("open"); $("#waToggle").setAttribute("aria-expanded", "true"); $("#waToggle").textContent = "WhatsApp"; };
 $("#waClose").onclick = () => { $("#wa").classList.remove("open"); $("#waToggle").setAttribute("aria-expanded", "false"); };
+
+/* =================== CHECK VIEWS: read only; every action runs in Desk =================== */
+const V = { todayFilter: "All", hiringRole: null, q: "", type: "All", owner: "All" };
+function showTab() {
+  const t = location.hash.slice(1);
+  currentTab = TABS.includes(t) ? t : "desk";
+  document.querySelectorAll(".sidenav a").forEach(a => a.dataset.tab === currentTab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  const onDesk = currentTab === "desk";
+  $("#chatView").hidden = !onDesk; $("#view").hidden = onDesk;
+  if (onDesk) { scroll(); $("#q").focus({ preventScroll: true }); } else renderTab();
+}
+window.addEventListener("hashchange", () => { if (!$("#s-app").hidden && D) showTab(); });
+function withDesk(fn) { location.hash = "desk"; fn(); }
+
+const whenPill = w => ({ Late: "p-late", Today: "p-warn", "This week": "p-acc", Done: "p-ok" }[w] || "p-mut");
+const wherePill = p => p.stage === "Rejected" ? "p-mut" : p.late ? "p-late" : p.type === "Joiner" ? "p-acc" : p.type === "Employee" ? (p.probation?.status === "Review due" ? "p-warn" : "p-ok") : p.stage === "Offer" ? "p-warn" : "p-mut";
+function ownerFilterHtml() {
+  if (mode !== "lead") return "";
+  return `<label class="sr" for="ownerF">Owner</label><select id="ownerF" data-vf="owner">${["All", "Ritu", `${first()} (you)`, "Others"].map(o => `<option${V.owner === o ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+}
+function ownerMatch(o) {
+  if (mode !== "lead" || V.owner === "All") return true;
+  const n = ownerName(o);
+  return V.owner === "Others" ? !["Ritu", `${first()} (you)`].includes(n) : n === V.owner;
+}
+
+function renderTab() {
+  const v = $("#view");
+  const head = (h, p, act) => `<div class="vhead"><div><h2>${h}</h2><p>${p}</p></div>${act || ""}</div>`;
+  let html = "";
+  if (currentTab === "today") {
+    const list = D.tasks.filter(t => (V.todayFilter === "All" ? true : t.when === V.todayFilter) && ownerMatch(t.owner));
+    const order = { Late: 0, Today: 1, "This week": 2, Done: 3 };
+    list.sort((a, b) => order[a.when] - order[b.when]);
+    html = head("Today", `${D.tasks.filter(t => !t.done).length} open tasks · ${D.tasks.filter(t => !t.done && t.when === "Late").length} late`) +
+      `<div class="toolbar" role="group" aria-label="Filter tasks">${["All", "Late", "Today", "This week", "Done"].map(f => `<button class="fchip" type="button" data-vf="todayFilter" data-val="${f}" aria-pressed="${V.todayFilter === f}">${f}</button>`).join("")}${ownerFilterHtml()}</div>
+      <div class="card">${list.length ? list.map(t => `<div class="item"><span class="pill ${whenPill(t.when)}">${esc(t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)} · Owner: ${esc(ownerName(t.owner))}</small></div>
+        ${t.done ? "" : `<button class="btn${t.when === "Late" ? " primary" : ""}" type="button" data-v="task" data-key="${esc(t.key)}">Do it with Desk</button>`}</div>`).join("") : '<div class="emptyv">Nothing here.</div>'}</div>`;
+  } else if (currentTab === "hiring") {
+    const sel = V.hiringRole && roleOf(V.hiringRole);
+    html = head("Hiring", `${D.roles.filter(r => r.status === "Open").length} open roles · tap a role for its board`, `<button class="btn primary" type="button" data-v="newRole">New role with Desk</button>`) +
+      `<div class="rolegrid">${D.roles.map(r => {
+        const c = stageCounts(r.id), tot = Object.values(c).reduce((a, b) => a + b, 0) || 1;
+        return `<button class="rolecard" type="button" data-v="role" data-rid="${r.id}" aria-pressed="${V.hiringRole === r.id}"><div class="rt"><div><b>${esc(r.title)}</b><div class="note">${esc(r.city)} · ${r.openings} opening${r.openings > 1 ? "s" : ""} · ${esc(r.budget)} · ${r.days} days open</div></div><span class="pill ${r.status === "Open" ? "p-ok" : "p-acc"}">${esc(r.status)}</span></div>
+          <div class="stagebar" aria-hidden="true">${["Applied", "Screened", "Interview", "Offer"].map(s => `<i style="width:${(c[s] / tot) * 100}%"></i>`).join("")}</div>
+          <div class="counts">${["Applied", "Screened", "Interview", "Offer"].map(s => `<span><b>${c[s]}</b>${s}</span>`).join("")}</div></button>`; }).join("")}</div>` +
+      (sel ? (() => {
+        const actions = sel.id === 1 && !D.done.offerSent ? `<button class="btn primary" type="button" data-v="task" data-key="offer">Build Kiran's offer in Desk</button>` + (task("chase").done ? "" : `<button class="btn" type="button" data-v="task" data-key="chase">Chase late feedback in Desk</button>`)
+          : sel.id === 2 && !D.done.bulk ? `<button class="btn primary" type="button" data-v="task" data-key="bulk">Send rejection notes with Desk</button>` : "";
+        return `<div class="card"><h4><span class="kind">Board</span>${esc(sel.title)}</h4><div class="c"><div class="board">${["Applied", "Screened", "Interview", "Offer"].map(st => {
+          const ps = D.people.filter(p => p.role === sel.id && p.stage === st);
+          return `<div class="col"><h5>${st} · ${ps.length}</h5>${ps.map(p => `<span class="cand${p.late ? " hot" : ""}" title="${esc(p.where)}">${esc(p.name)}<span class="note" style="display:block">${esc(p.where)}</span></span>`).join("") || '<span class="note">None</span>'}</div>`; }).join("")}</div>
+          ${actions ? `<div class="row">${actions}</div>` : ""}</div></div>`; })() : "");
+  } else if (currentTab === "people") {
+    const q = V.q.trim().toLowerCase();
+    const list = D.people.filter(p => (V.type === "All" || p.type === V.type) && ownerMatch(p.owner) &&
+      (!q || [p.name, p.roleTitle, roleOf(p.role)?.title, p.where].join(" ").toLowerCase().includes(q)));
+    html = head("People", "Everyone from candidate to employee, in one list") +
+      `<div class="toolbar"><label class="sr" for="pq">Search people</label><input type="search" id="pq" data-vf="q" placeholder="Search by name, role or status" value="${esc(V.q)}">
+       <label class="sr" for="ptype">Type</label><select id="ptype" data-vf="type">${["All", "Candidate", "Joiner", "Employee"].map(o => `<option${V.type === o ? " selected" : ""}>${o}</option>`).join("")}</select>${ownerFilterHtml()}</div>
+      <div class="card"><div class="tablewrap"><table><tr><th>Name</th><th>Type</th><th>Role</th><th>Where they are</th><th>Owner</th></tr>
+      ${list.map(p => `<tr><td style="font-weight:500">${esc(p.name)}</td><td>${esc(p.type)}</td><td>${esc(roleOf(p.role)?.title || p.roleTitle || "")}</td><td><span class="pill ${wherePill(p)}">${esc(p.stage && p.type === "Candidate" ? p.stage + " · " : "")}${esc(p.where)}</span></td><td style="text-align:left">${esc(ownerName(p.owner))}</td></tr>`).join("") || '<tr><td colspan="5" class="emptyv">No one matches that search.</td></tr>'}
+      </table></div></div><p class="note">${list.length} of ${D.people.length} people · sample data</p>`;
+  } else if (currentTab === "joiners") {
+    const js = D.people.filter(p => p.type === "Joiner"), ps = D.people.filter(p => p.probation);
+    html = head("Joiners & probation", "From offer accepted to confirmation") +
+      `<div class="card"><h4><span class="kind">Joining soon</span></h4>${js.length ? js.map(j => {
+        const done = j.checklist.filter(c => c.done).length, miss = j.checklist.filter(c => !c.done).map(c => c.t);
+        const fixKey = j.name === "Sneha Rao" ? (!j.checklist[1].done ? "letter" : !j.checklist[2].done ? "laptop" : null) : (!j.checklist[1].done ? "kiranLetter" : !j.checklist[2].done ? "kiranLaptop" : null);
+        return `<div class="item"><div class="t"><b style="font-weight:500">${esc(j.name)}</b> · ${esc(j.roleTitle)}<small>Day 1: ${esc(j.day1)}${miss.length ? " · Missing: " + esc(miss.join(", ")) : " · All set"}</small></div>
+          <span class="prog"><i style="--p:${(done / j.checklist.length) * 100}%"></i>${done}/${j.checklist.length}</span>
+          ${fixKey && !task(fixKey)?.done ? `<button class="btn primary" type="button" data-v="task" data-key="${fixKey}">Fix with Desk</button>` : ""}</div>`; }).join("") : '<div class="emptyv">No one joining soon.</div>'}</div>
+      <div class="card"><h4><span class="kind">Probation reviews</span></h4>${ps.map(p => `<div class="item"><div class="t"><b style="font-weight:500">${esc(p.name)}</b> · ${esc(p.roleTitle)}<small>Ends ${esc(p.probation.ends)} · manager ${esc(p.probation.manager)}</small></div>
+        <span class="pill ${p.probation.status === "Review due" ? "p-warn" : p.probation.status === "Confirmed" ? "p-ok" : "p-acc"}">${esc(p.probation.status)}</span>
+        ${p.probation.status === "Review due" ? '<button class="btn primary" type="button" data-v="task" data-key="probation">Start with Desk</button>' : ""}</div>`).join("")}</div>`;
+  }
+  v.innerHTML = `<div class="inner">${html}</div>`;
+}
+$("#view").addEventListener("click", e => {
+  const b = e.target.closest("[data-v],[data-vf]"); if (!b) return;
+  if (b.dataset.vf && b.dataset.val) { V[b.dataset.vf] = b.dataset.val; return renderTab(); }
+  if (b.dataset.v === "task") return withDesk(() => runTask(b.dataset.key, true));
+  if (b.dataset.v === "newRole") return withDesk(() => { me("I want to open a new role"); say("Sure. Tell me the role, city and budget, for example <i>\"Ek data analyst chahiye Bangalore mein, 8-10L\"</i>."); chips([["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")], ["Hire 2 sales execs in Pune", () => hireFrom("Hire 2 sales execs in Pune")]]); });
+  if (b.dataset.v === "role") { V.hiringRole = V.hiringRole === Number(b.dataset.rid) ? null : Number(b.dataset.rid); renderTab(); }
+});
+$("#view").addEventListener("input", e => {
+  const f = e.target.closest("[data-vf]"); if (!f || f.dataset.val) return;
+  V[f.dataset.vf] = f.value;
+  if (f.id === "pq") { const pos = f.selectionStart; renderTab(); const n = $("#pq"); n.focus(); n.setSelectionRange(pos, pos); } else renderTab();
+});
 
 /* =================== START =================== */
 (async () => {

@@ -16,14 +16,14 @@ begin
     (rahul,  co, 'Rahul',  'Founder',            'approver', '+910000000001', true),
     (ritu,   co, 'Ritu',   'HR & recruiter',     'owner',    null, false),
     (meera,  co, 'Meera',  'HR Manager',         'lead',     '+910000000003', true),
-    (arjun,  co, 'Arjun',  'Engineering Manager','member',   '+910000000004', true),
+    (arjun,  co, 'Arjun Mehta', 'Engineering Manager','member',   '+910000000004', true),
     (vikram, co, 'Vikram', 'Head of Engineering','member',   '+910000000005', true),
     (suresh, co, 'Suresh', 'IT',                 'member',   '+910000000006', true);
 
   insert into role(id, company_id, title, city, openings, budget_min, budget_max, status, owner_id, approved_by, approved_at) values
     (r_backend, co, 'Backend Developer',  'Hyderabad', 1, 1000000, 1400000, 'open', ritu, rahul, now() - interval '21 days'),
     (r_ops,     co, 'Operations Analyst', 'Hyderabad', 1,  500000,  700000, 'open', ritu, rahul, now() - interval '14 days'),
-    (r_cs,      co, 'Customer Success',   'Hyderabad', 1,  450000,  600000, 'open', ritu, rahul, now() - interval '9 days');
+    (r_cs,      co, 'Customer Success Associate', 'Hyderabad', 1,  450000,  600000, 'open', ritu, rahul, now() - interval '9 days');
 
   -- Backend Developer funnel: 12 applied, 5 screened, 3 interview, 1 offer
   for n in 1..12 loop
@@ -38,7 +38,7 @@ begin
   insert into application(company_id, role_id, person_id, stage) values (co, r_backend, p, 'Interview') returning id into a;
   insert into interview(company_id, application_id, round, interviewer_id, scheduled_at) values (co, a, 'Round 1', arjun, now() - interval '26 hours') returning id into i;
   insert into task(company_id, title, kind, owner_id, subject_type, subject_id, due_at, escalation_chain, why) values
-    (co, 'Arjun hasn''t given feedback on 2 candidates', 'feedback', arjun, 'interview', i, now() - interval '2 hours', array[vikram], 'Backend Developer · escalates to Vikram at 4 pm');
+    (co, 'Arjun Mehta hasn''t given feedback on 2 candidates', 'feedback', arjun, 'interview', i, now() - interval '2 hours', array[vikram], 'Backend Developer · escalates to Vikram at 4 pm');
   insert into person(company_id, full_name) values (co, 'Lakshmi R.') returning id into p;
   insert into application(company_id, role_id, person_id, stage) values (co, r_backend, p, 'Interview');
   insert into person(company_id, full_name) values (co, 'Sameer T.') returning id into p;
@@ -49,6 +49,19 @@ begin
   -- Deliberately fails the 50% wages check
   insert into offer(company_id, application_id, ctc, components, status) values (co, a, 1200000,
     '[{"name":"Basic + DA","kind":"basic","amount":420000},{"name":"HRA","kind":"hra","amount":210000},{"name":"Special allowance","kind":"special","amount":510000},{"name":"Employer PF","kind":"employer_pf","amount":60000}]', 'draft');
+
+
+  -- Operations Analyst: 4 candidates below 60% on the Excel test
+  for n in 1..4 loop
+    insert into person(company_id, full_name) values (co, (array['Megha D.','Imran S.','Tarun B.','Pooja N.'])[n]) returning id into p;
+    insert into application(company_id, role_id, person_id, stage) values (co, r_ops, p, 'Screened');
+  end loop;
+  insert into task(company_id, title, kind, owner_id, due_at, why) values
+    (co, 'Send rejection notes to 4 Operations Analyst candidates', 'bulk_reject', ritu, now() + interval '3 days', 'Below 60% on the Excel test');
+
+  -- Customer Success Associate: includes Arjun Rao, so Desk must ask "Arjun Mehta or Arjun Rao?"
+  insert into person(company_id, full_name) values (co, 'Arjun Rao') returning id into p;
+  insert into application(company_id, role_id, person_id, stage) values (co, r_cs, p, 'Screened');
 
   -- Joiner Sneha on Mon 16 Nov with no appointment letter yet
   insert into person(company_id, full_name, status, joined_on, probation_ends_on, manager_id) values
