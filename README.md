@@ -8,6 +8,7 @@ Live at **https://desk.crovantapartner.com** (GitHub Pages).
   - **Demo mode** (no Supabase keys in `config.js`): the code is shown on screen and data stays in your browser.
   - **Live mode**: Supabase Auth emails the code; your company and profile are saved in Postgres (Mumbai).
 - One screen: status strip, Desk chat with quick replies, file upload, WhatsApp preview.
+- Tabs for navigation (founder decision, 11 Nov, overriding the brief's "no tabs"): Desk, Roles, Pipeline, Joiners & probation, Approvals. Chat stays the home screen; tabs and chat share the same state, and status-strip tiles link to their tab.
 - All 7 card types from the brief: brief, approval, pipeline, offer/CTC, scorecard, joiner checklist, bulk preview.
 - Solo and Lead + juniors setups. Approvals go to your WhatsApp number (preview panel for now).
 - Guardrails: drafts until approved, approvals logged, 10-minute undo, fixed rejection reasons, protected-trait text blocked, "ask, don't guess".

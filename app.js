@@ -74,23 +74,117 @@ $("#signOut").addEventListener("click", async () => { await auth.signOut(); user
 
 /* =================== DESK =================== */
 const inner = $("#inner"), log = $("#log"), ph = $("#ph"), chipsEl = $("#chips");
-let S;
+let S, currentTab = "desk";
+const TABS = ["desk", "roles", "pipeline", "joiners", "approvals"];
 const first = () => (profile?.name || "there").split(/\s+/)[0];
 const phoneLabel = () => profile?.phone ? `you · ${profile.phone}` : "you";
 
 function openApp() {
   $("#coLine").textContent = `${profile.company} · Desk is using Acme Fintech sample data for this test`;
   S = null; init(profile.setup === "lead_juniors" ? "lead" : "solo");
-  show("s-app"); $("#q").focus();
+  show("s-app"); showTab();
+}
+
+/* =================== TABS =================== */
+function showTab() {
+  const t = location.hash.slice(1);
+  currentTab = TABS.includes(t) ? t : "desk";
+  document.querySelectorAll(".tabs a").forEach(a => a.dataset.tab === currentTab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  const onDesk = currentTab === "desk";
+  $("#chatView").hidden = !onDesk; $("#view").hidden = onDesk;
+  if (onDesk) { scroll(); $("#q").focus({ preventScroll: true }); } else renderTab();
+}
+window.addEventListener("hashchange", () => { if (!$("#s-app").hidden && S) showTab(); });
+function goDesk(label, fn) { location.hash = "desk"; me(label); fn(); }
+
+const pillFor = s => ({ Open: "p-ok", Filled: "p-acc", missing: "p-late", sent: "p-ok", requested: "p-warn", due: "p-warn", "with manager": "p-acc", confirmed: "p-ok", extended: "p-mut" }[s] || "p-mut");
+const VACT = {
+  newRole: () => goDesk("Hire 2 sales execs in Pune", hire),
+  pipeline: () => { location.hash = "pipeline"; },
+  offer: () => goDesk("Build Kiran's offer", offer),
+  bulk: () => goDesk("Reject candidates who failed the test", bulk),
+  chase: () => goDesk("Chase Arjun", chase),
+  letter: () => goDesk("Draft Sneha's letter", letter),
+  probation: () => goDesk("Start Priya's probation review", probation),
+  lead: () => $("#m-lead").click(),
+};
+$("#view").addEventListener("click", e => {
+  const b = e.target.closest("[data-v]"); if (!b) return;
+  if (b.dataset.v === "approve" || b.dataset.v === "sendback") {
+    const item = S.pending.find(x => x.id === Number(b.dataset.id));
+    if (item) { location.hash = "desk"; item.resolve(b.dataset.v === "approve", "in Approvals"); }
+    return;
+  }
+  VACT[b.dataset.v]?.();
+});
+
+function renderTab() {
+  const v = $("#view");
+  const head = (h, p, act) => `<div class="vhead"><div><h2>${h}</h2><p>${p}</p></div>${act || ""}</div>`;
+  let html = "";
+  if (currentTab === "roles") {
+    html = head("Roles", `${S.rolesList.filter(r => r.status === "Open").length} open · sample data`, `<button class="btn primary" type="button" data-v="newRole">New role</button>`) +
+      `<div class="card"><div class="tablewrap"><table>
+       <tr><th>Role</th><th>City</th><th>Openings</th><th>Budget (CTC)</th><th>Days open</th><th>Applied → Screened → Interview → Offer</th><th>Status</th></tr>
+       ${S.rolesList.map((r, i) => `<tr><td><b style="font-weight:500">${esc(r.title)}</b><div class="note">${esc(r.note)}</div></td><td>${esc(r.city)}</td><td>${r.openings}</td><td>${esc(r.budget)}</td><td>${r.days}</td>
+         <td><span class="funnel"><b>${r.funnel[0]}</b>→<b>${r.funnel[1]}</b>→<b>${r.funnel[2]}</b>→<b>${r.funnel[3]}</b></span></td>
+         <td><span class="pill ${pillFor(r.status)}">${esc(r.status)}</span>${i === 0 ? ` <button class="link" type="button" data-v="pipeline">Pipeline</button>` : ""}</td></tr>`).join("")}
+       </table></div></div>`;
+  } else if (currentTab === "pipeline") {
+    const be = S.rolesList[0], kiranHired = S.done.accepted;
+    html = head("Pipeline", "Backend Developer · tap a candidate for the next step") +
+      `<div class="card"><h4><span class="kind">Backend Developer</span>${be.days} days open <span class="pill ${kiranHired ? "p-acc" : "p-warn"}">${kiranHired ? "Filled" : "1 offer pending"}</span></h4><div class="c"><div class="board">
+       <div class="col"><h5>Applied · 12</h5><span class="cand">Farah K.</span><span class="cand">Dev P.</span><span class="note">+10 more</span></div>
+       <div class="col"><h5>Screened · 5</h5><span class="cand">Neha J.</span><span class="cand">Rohan M.</span><span class="note">+3 more</span></div>
+       <div class="col"><h5>Interview · 3</h5><button class="cand" type="button" data-v="chase">Ankit V. · feedback late</button><span class="cand">Lakshmi R.</span><span class="cand">Sameer T.</span></div>
+       <div class="col"><h5>Offer · ${kiranHired ? 0 : 1}</h5>${kiranHired ? '<span class="note">Kiran S. accepted · joins 30 Nov</span>' : '<button class="cand hot" type="button" data-v="offer">Kiran S. → build offer</button>'}</div>
+       </div></div></div>
+       <div class="card"><h4><span class="kind">Operations Analyst</span>14 days open <span class="pill p-warn">Action needed</span></h4>
+        <div class="item"><div class="t">4 candidates scored below 60% on the Excel test<small>Desk has a rejection draft with a job-relevant reason</small></div><button class="btn" type="button" data-v="bulk">Review rejections</button></div></div>`;
+  } else if (currentTab === "joiners") {
+    html = head("Joiners & probation", "From offer accepted to confirmation") +
+      `<div class="card"><h4><span class="kind">Joining soon</span></h4>
+       ${S.joiners.map(j => `<div class="item"><div class="t"><b style="font-weight:500">${esc(j.name)}</b> · ${esc(j.role)}<small>Day 1: ${esc(j.day1)}</small></div>
+        <span class="pill ${pillFor(j.letter)}">Letter: ${esc(j.letter)}</span><span class="pill ${pillFor(j.it)}">Laptop: ${esc(j.it)}</span>
+        ${j.letter === "missing" ? '<button class="btn primary" type="button" data-v="letter">Draft letter</button>' : ""}</div>`).join("")}</div>
+       <div class="card"><h4><span class="kind">Probation reviews</span></h4>
+       ${S.probation.map(p => `<div class="item"><div class="t"><b style="font-weight:500">${esc(p.name)}</b> · ${esc(p.role)}<small>Ends ${esc(p.ends)} · manager ${esc(p.manager)}</small></div>
+        <span class="pill ${pillFor(p.status)}">${esc(p.status === "due" ? "Review due" : p.status)}</span>
+        ${p.status === "due" ? '<button class="btn primary" type="button" data-v="probation">Start review</button>' : ""}</div>`).join("")}</div>`;
+  } else if (currentTab === "approvals") {
+    const pend = S.pending.length
+      ? S.pending.map(p => `<div class="item"><div class="t"><b style="font-weight:500">${esc(p.what)}</b><small>Drafted by ${esc(p.by)} · also sent to ${esc(phoneLabel())} on WhatsApp</small></div>
+          <button class="btn" type="button" data-v="sendback" data-id="${p.id}">Send back</button><button class="btn primary" type="button" data-v="approve" data-id="${p.id}">Approve</button></div>`).join("")
+      : `<div class="emptyv">${S.mode === "solo" ? 'Nothing waiting. In Solo setup, what you approve goes out straight away. <button class="link" type="button" data-v="lead">Switch to Lead + juniors</button> to see the review queue.' : "Nothing waiting for approval."}</div>`;
+    html = head("Approvals", "Nothing reaches a candidate or employee without a named approval") +
+      `<div class="card"><h4><span class="kind">Waiting for ${esc(first())}</span></h4>${pend}</div>
+       <div class="card"><h4><span class="kind">Approved today</span></h4>${audit.length ? audit.map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} at ${a.at.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</small></div></div>`).join("") : '<div class="emptyv">No approvals yet today.</div>'}</div>`;
+  }
+  v.innerHTML = `<div class="inner">${html}</div>`;
 }
 
 function init(mode) {
-  S = { mode: mode || S?.mode || "solo", roles: 3, late: 2, join: 1, prob: 1, queue: 0, done: {} };
+  S = {
+    mode: mode || S?.mode || "solo", roles: 3, late: 2, join: 1, prob: 1, queue: 0, done: {}, pending: [],
+    rolesList: [
+      { title: "Backend Developer", city: "Hyderabad", openings: 1, days: 21, budget: "₹10–14 L", funnel: [12, 5, 3, 1], status: "Open", note: "1 offer pending" },
+      { title: "Operations Analyst", city: "Hyderabad", openings: 1, days: 14, budget: "₹5–7 L", funnel: [18, 6, 4, 0], status: "Open", note: "4 failed the Excel test" },
+      { title: "Customer Success", city: "Hyderabad", openings: 1, days: 9, budget: "₹4.5–6 L", funnel: [9, 3, 0, 0], status: "Open", note: "Screening" },
+    ],
+    joiners: [{ name: "Sneha Rao", role: "Product Designer", day1: "Mon 16 Nov", letter: "missing", it: "requested" }],
+    probation: [{ name: "Priya Nair", role: "Customer Success Associate", ends: "23 Nov", manager: "Vikram", status: "due" }],
+  };
+  audit.length = 0;
   inner.innerHTML = ""; ph.innerHTML = '<div class="empty">Messages Desk sends appear here.</div>';
   paint(); brief();
 }
 function paint() {
+  S.queue = S.pending.length;
   set("#t-roles", S.roles); set("#t-late", S.late); set("#t-join", S.join); set("#t-prob", S.prob); set("#t-queue", S.queue);
+  $("#n-roles").textContent = S.rolesList.length;
+  $("#n-joiners").textContent = S.joiners.length + S.probation.filter(p => p.status === "due").length || "";
+  const na = $("#n-approvals"); na.textContent = S.pending.length || ""; na.classList.toggle("hot", S.pending.length > 0);
+  if (currentTab !== "desk") renderTab();
   $("#t-late").classList.toggle("late", S.late > 0);
   $("#t-queue").hidden = S.mode !== "lead";
   $("#who").textContent = S.mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
@@ -113,6 +207,7 @@ function wa(to, text, acts) {
   ph.append(d); ph.scrollTop = ph.scrollHeight;
   if (acts) d.querySelectorAll("button").forEach(b => b.onclick = () => { d.querySelectorAll("button").forEach(x => x.disabled = true); const a = acts[b.dataset.i]; reply(a[0]); a[1](); });
   if (matchMedia("(max-width:1000px)").matches) $("#waToggle").textContent = "WhatsApp •";
+  return d;
 }
 function reply(t) { const d = document.createElement("div"); d.className = "wam out"; d.textContent = t; ph.append(d); ph.scrollTop = ph.scrollHeight; }
 
@@ -124,14 +219,24 @@ function defaults() {
 // Pencil & Ink: AI output is a draft until a named person approves it. Every approval is logged.
 const audit = [];
 function logApproval(what, by) { audit.push({ what, by, at: new Date() }); }
+let pid = 0;
 function approve(btn, what, after) {
   btn.closest(".card").querySelectorAll("button").forEach(x => x.disabled = true);
   if (S.mode === "solo") { logApproval(what, first()); after(); return; }
-  S.queue++; paint();
-  say(`Sent <b>${esc(what)}</b> to ${esc(first())} for approval on WhatsApp. It goes out once approved.`);
-  wa(phoneLabel(), `Ritu drafted <b>${esc(what)}</b>. Approve it?`, [
-    ["Approve", () => { S.queue--; paint(); logApproval(what, first()); say(`<span class="pill p-ok">Approved by ${esc(first())}</span>`); after(); }],
-    ["Send back with a comment", () => { S.queue--; paint(); say(`${esc(first())} sent it back: <i>"Add the joining bonus clause."</i> I've reopened the draft.`); }]]);
+  const item = { id: ++pid, what, by: "Ritu", at: new Date() };
+  item.resolve = (ok, via) => {
+    if (!S.pending.includes(item)) return;
+    S.pending = S.pending.filter(x => x !== item);
+    item.waNode?.querySelectorAll("button").forEach(x => x.disabled = true);
+    if (ok) { logApproval(what, first()); say(`<span class="pill p-ok">Approved by ${esc(first())}${via ? " " + via : ""}</span>`); after(); }
+    else say(`${esc(first())} sent it back: <i>"Add the joining bonus clause."</i> I've reopened the draft.`);
+    paint();
+  };
+  S.pending.push(item); paint();
+  say(`Sent <b>${esc(what)}</b> to ${esc(first())} for approval on WhatsApp and in Approvals. It goes out once approved.`);
+  item.waNode = wa(phoneLabel(), `Ritu drafted <b>${esc(what)}</b>. Approve it?`, [
+    ["Approve", () => item.resolve(true, "on WhatsApp")],
+    ["Send back with a comment", () => item.resolve(false)]]);
 }
 
 function brief() {
@@ -197,7 +302,7 @@ Notice period: 30 days after confirmation …</div>
   <div class="row"><button class="btn primary" type="button" data-a="sendLetter">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div></div></div>`));
 }
 ACT.rejectDraft = b => { b.closest(".card").querySelectorAll("button").forEach(x => x.disabled = true); say("Draft discarded. Nothing was sent."); };
-ACT.sendLetter = b => approve(b, "Sneha's appointment letter", () => { S.late = Math.max(0, S.late - 1); paint(); say("Sent to Sneha for e-acknowledgement. Her joiner checklist is on track for Monday."); });
+ACT.sendLetter = b => approve(b, "Sneha's appointment letter", () => { S.late = Math.max(0, S.late - 1); S.joiners[0].letter = "sent"; paint(); say("Sent to Sneha for e-acknowledgement. Her joiner checklist is on track for Monday."); });
 
 function hire() { later(() => { say("Got it: 2 Sales Executives in Pune, ₹4–5 L. Two quick questions so I set this up right. How much experience?"); chips([["1–3 years", hire2], ["Freshers are fine", hire2]]); }); }
 function hire2() { later(() => { say("When do you need them to start?"); chips([["Within 30 days", hire3], ["Within 60 days", hire3]]); }); }
@@ -213,10 +318,15 @@ function hire3() {
 ACT.sendRole = () => {
   say(`Sent to ${esc(phoneLabel())} on WhatsApp. One word approves it.`);
   wa(phoneLabel(), "New role to approve: <b>2 × Sales Executive, Pune</b>, ₹4–5 L each, start within 30 days. Reply YES to approve.", [
-    ["YES", () => { S.roles++; paint(); logApproval("Sales Executive role", first()); say(`<span class="pill p-ok">Approved by ${esc(first())}</span> The role is live. I'll acknowledge every applicant within 24 hours.`); }],
-    ["Make it 1 opening", () => { S.roles++; paint(); say("Approved with 1 opening instead of 2. I've updated the role and it's live."); }]]);
+    ["YES", () => { addSalesRole(2); logApproval("Sales Executive role", first()); say(`<span class="pill p-ok">Approved by ${esc(first())}</span> The role is live. I'll acknowledge every applicant within 24 hours.`); }],
+    ["Make it 1 opening", () => { addSalesRole(1); logApproval("Sales Executive role (1 opening)", first()); say("Approved with 1 opening instead of 2. I've updated the role and it's live."); }]]);
 };
 
+function addSalesRole(n) {
+  if (S.rolesList.some(r => r.title === "Sales Executive")) return;
+  S.roles++; S.rolesList.push({ title: "Sales Executive", city: "Pune", openings: n, days: 0, budget: "₹4–5 L", funnel: [0, 0, 0, 0], status: "Open", note: "Just approved" });
+  paint();
+}
 function pipeline() {
   later(() => {
     desk(`<div class="bubble">Backend Developer pipeline. Tap a candidate.</div>
@@ -254,7 +364,11 @@ ACT.fixCtc = b => {
 ACT.sendOffer = b => approve(b, "Kiran's offer letter", () => { say("Offer sent to Kiran, valid for 3 days. I'll remind him on day 2."); chips([["Kiran accepted the offer", accepted], ["Show my pipeline", pipeline]]); });
 
 function accepted() {
-  S.join++; paint();
+  if (S.done.accepted) return say("Kiran's onboarding has already started. See Joiners & probation.");
+  S.done.accepted = 1;
+  S.join++; S.joiners.push({ name: "Kiran S.", role: "Backend Developer", day1: "Mon 30 Nov", letter: "due 25 Nov", it: "requested" });
+  const be = S.rolesList[0]; be.funnel[3] = 0; be.status = "Filled"; be.note = "Kiran joins 30 Nov"; S.roles = Math.max(0, S.roles - 1);
+  paint();
   later(() => {
     desk(`<div class="bubble">Kiran accepted. I created his employee record and started onboarding. Joining Mon 30 Nov.</div>
   <div class="card"><h4><span class="kind">Joiner checklist</span>Kiran S. · Day 1 on Mon 30 Nov <span class="pill p-acc">On track</span></h4>
@@ -281,7 +395,7 @@ ACT.sendBulk = b => approve(b, "4 rejection notes", () => say("Sent. All 4 statu
 
 function probation() {
   if (S.done.prob) return say("Priya's review is already with Vikram.");
-  S.done.prob = 1;
+  S.done.prob = 1; S.probation[0].status = "with manager"; paint();
   later(() => {
     say("I sent Vikram, Priya's manager, a 3-question review on WhatsApp, due in 3 days. I'll escalate if it slips.");
     wa("Vikram (manager)", "Priya Nair's probation ends on 23 Nov. Your call:", [
@@ -289,10 +403,10 @@ function probation() {
        <div class="card draft"><h4><span class="kind">Approval</span>Confirmation letter · Priya Nair <span class="pill p-acc">Draft</span></h4><div class="c"><div class="doc">Dear Priya,
 We are happy to confirm your employment as Customer Success Associate with effect from 23 Nov 2026 …</div>
        <div class="row"><button class="btn primary" type="button" data-a="sendConf">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`)],
-      ["Extend by 3 months", () => say("Vikram wants an extension. I'll draft the extension letter with his reasons and set a new review date.")]]);
+      ["Extend by 3 months", () => { S.probation[0].status = "extended"; S.prob = Math.max(0, S.prob - 1); paint(); say("Vikram wants an extension. I'll draft the extension letter with his reasons and set a new review date."); }]]);
   });
 }
-ACT.sendConf = b => approve(b, "Priya's confirmation letter", () => { S.prob = Math.max(0, S.prob - 1); paint(); say("Sent. Priya acknowledged it."); });
+ACT.sendConf = b => approve(b, "Priya's confirmation letter", () => { S.prob = Math.max(0, S.prob - 1); S.probation[0].status = "confirmed"; paint(); say("Sent. Priya acknowledged it."); });
 
 function wrap() {
   later(() => desk(`<div class="bubble">Here's your day.</div>

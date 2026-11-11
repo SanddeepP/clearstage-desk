@@ -77,13 +77,30 @@ header.top .logo .mark{width:28px;height:28px;border-radius:8px;font-size:13px}
 .seg button{border:0;background:var(--surface);color:var(--text2);padding:0 12px;min-height:32px;font-size:13px;cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:500}
 .strip{display:flex;gap:8px;flex-wrap:wrap;padding-block:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));background:var(--surface);border-bottom:1px solid var(--line)}
-.tile{display:flex;align-items:baseline;gap:6px;padding:4px 12px;border-radius:999px;background:var(--bg);border:1px solid var(--line);font-size:13px;color:var(--text2)}
+.tile{display:flex;align-items:baseline;gap:6px;padding:4px 12px;border-radius:999px;background:var(--bg);border:1px solid var(--line);font-size:13px;color:var(--text2);text-decoration:none}
 .tile b{font-size:15px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
 .tile.late{background:var(--late-bg);border-color:transparent;color:var(--late)}
 .tile.late b{color:var(--late)}
 .tile.flash{animation:flash .9s}
 @keyframes flash{from{box-shadow:0 0 0 0 var(--accent)}to{box-shadow:0 0 0 8px transparent}}
 
+.tabs{display:flex;gap:4px;overflow-x:auto;background:var(--surface);border-bottom:1px solid var(--line);padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px));scrollbar-width:none}
+.tabs a{display:inline-flex;align-items:center;gap:6px;padding:0 12px;min-height:44px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;font-weight:500}
+.tabs a:hover{color:var(--text)}
+.tabs a[aria-current="page"]{color:var(--text);border-bottom-color:var(--accent)}
+.tabs .n{font-size:12px;background:var(--hover);color:var(--text2);border-radius:999px;padding:0 7px;font-variant-numeric:tabular-nums}
+.tabs .n:empty{display:none}
+.tabs .n.hot{background:var(--late-bg);color:var(--late)}
+.tile[data-go]{cursor:pointer}
+.tile[data-go]:hover{border-color:var(--dash)}
+.view{overflow-y:auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));min-width:0}
+.view .inner{max-width:900px}
+.vhead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.vhead h2{font-size:20px;font-weight:600;letter-spacing:-.2px}
+.vhead p{margin:2px 0 0;color:var(--muted)}
+.funnel{display:flex;gap:4px;align-items:center;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.funnel b{color:var(--text);font-weight:600}
+.emptyv{padding:24px 14px;text-align:center;color:var(--muted)}
 .work{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 340px}
 .chat{display:flex;flex-direction:column;min-height:0;min-width:0}
 .log{flex:1;overflow-y:auto;padding-block:20px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}

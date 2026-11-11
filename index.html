@@ -85,14 +85,22 @@
     <button class="btn" type="button" id="signOut">Sign out</button>
   </header>
   <div class="strip" aria-live="polite">
-    <div class="tile" id="t-roles"><b>3</b> open roles</div>
-    <div class="tile late" id="t-late"><b>2</b> late</div>
-    <div class="tile" id="t-join"><b>1</b> joining this week</div>
-    <div class="tile" id="t-prob"><b>1</b> probation due</div>
-    <div class="tile" id="t-queue" hidden><b>0</b> waiting for approval</div>
+    <a class="tile" id="t-roles" data-go href="#roles"><b>3</b> open roles</a>
+    <a class="tile late" id="t-late" data-go href="#desk"><b>2</b> late</a>
+    <a class="tile" id="t-join" data-go href="#joiners"><b>1</b> joining this week</a>
+    <a class="tile" id="t-prob" data-go href="#joiners"><b>1</b> probation due</a>
+    <a class="tile" id="t-queue" data-go href="#approvals" hidden><b>0</b> waiting for approval</a>
   </div>
+  <nav class="tabs" aria-label="Sections">
+    <a href="#desk" data-tab="desk">Desk</a>
+    <a href="#roles" data-tab="roles">Roles <span class="n" id="n-roles"></span></a>
+    <a href="#pipeline" data-tab="pipeline">Pipeline</a>
+    <a href="#joiners" data-tab="joiners">Joiners &amp; probation <span class="n" id="n-joiners"></span></a>
+    <a href="#approvals" data-tab="approvals">Approvals <span class="n" id="n-approvals"></span></a>
+  </nav>
   <div class="work">
-    <section class="chat" aria-label="Desk chat">
+    <section class="view" id="view" aria-live="polite" hidden></section>
+    <section class="chat" id="chatView" aria-label="Desk chat">
       <div class="log" id="log"><div class="inner" id="inner"></div></div>
       <div class="composer">
         <div class="chips" id="chips"></div>
