@@ -1,48 +1,19 @@
 /* Layout: sign-in card, then one screen: pinned status strip, Desk chat in the centre,
    WhatsApp preview on the right (hidden on narrow screens behind a button). */
-/* Clearstage brand tokens (Brand Book v1, 12 Nov 2026). Older names below are aliases of the brand tokens. */
+/* Colours, type, spacing, radii and fonts come from tokens.css, generated from design/tokens.json (brand book v4).
+   Light only in v1 (CTO, 12 Nov). The short names below are aliases kept so older rules follow the brand tokens. */
 :root{
-  --paper:#F6F7F9; --surface:#FFFFFF; --surface-sunk:#EEF1F4; --line:#E6E8EC; --line-strong:#D0D5DD;
-  --ink:#1F2933; --ink-2:#475467; --ink-3:#667085;
-  --teal:#2F6F6A; --teal-hover:#265B57; --on-teal:#FFFFFF; --teal-soft:#E6F0EE;
-  --pencil:#8A94A6; --pencil-ground:#FAFBFC;
-  --clock:#8A4F0F; --clock-bar:#D9A262; --clock-soft:#FBF1E4;
-  --late:#B42318; --late-soft:#FDEDEC; --ontime:#1E6B47; --ontime-soft:#E7F4EC;
-  --night:#14201F; --on-night:#E8EDEB;
-  --shadow-card:0 1px 2px rgba(16,24,40,0.04); --shadow-sheet:0 12px 32px rgba(16,24,40,0.12);
-  --wa-bg:#EEF2EF; --wa-in:#FFFFFF; --wa-out:#D9F0DF;
   --bg:var(--paper); --soft:var(--pencil-ground); --hover:var(--surface-sunk); --line2:var(--line); --field:var(--line-strong); --dash:var(--pencil);
   --text:var(--ink); --text2:var(--ink-2); --muted:var(--ink-3);
   --accent:var(--teal); --accent-ink:var(--on-teal); --accent-soft:var(--teal-soft); --accent-text:var(--teal);
   --late-bg:var(--late-soft); --warn:var(--clock); --warn-bg:var(--clock-soft); --ok:var(--ontime); --ok-bg:var(--ontime-soft);
-  --font:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
-  --display:Archivo,"Helvetica Neue",Arial,sans-serif;
-  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  --font:var(--font-sans); --display:var(--font-display); --mono:var(--font-mono);
+  --wa-bg:#EEF2EF; --wa-in:#FFFFFF; --wa-out:#D9F0DF; /* WhatsApp preview only: WhatsApp's own chat colours */
 }
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --paper:#111816; --surface:#18211F; --surface-sunk:#202B28; --line:#2B3633; --line-strong:#3D4A47;
-  --ink:#E8EDEB; --ink-2:#B8C4C0; --ink-3:#94A29D;
-  --teal:#7CC4BA; --teal-hover:#93D2C9; --on-teal:#0E1F1C; --teal-soft:#1C3330;
-  --pencil:#76847F; --pencil-ground:#151D1B;
-  --clock:#F2B872; --clock-bar:#C98A3E; --clock-soft:#3A2A14;
-  --late:#FF9B91; --late-soft:#3B1C19; --ontime:#86D8AE; --ontime-soft:#16302A;
-  --night:#0B100F; --on-night:#E8EDEB;
-  --shadow-card:none; --shadow-sheet:0 12px 32px rgba(0,0,0,0.5);
-  --wa-bg:#141B19; --wa-in:#1E2826; --wa-out:#1F3D2B; color-scheme:dark;}}
-:root[data-theme="dark"]{
-  --paper:#111816; --surface:#18211F; --surface-sunk:#202B28; --line:#2B3633; --line-strong:#3D4A47;
-  --ink:#E8EDEB; --ink-2:#B8C4C0; --ink-3:#94A29D;
-  --teal:#7CC4BA; --teal-hover:#93D2C9; --on-teal:#0E1F1C; --teal-soft:#1C3330;
-  --pencil:#76847F; --pencil-ground:#151D1B;
-  --clock:#F2B872; --clock-bar:#C98A3E; --clock-soft:#3A2A14;
-  --late:#FF9B91; --late-soft:#3B1C19; --ontime:#86D8AE; --ontime-soft:#16302A;
-  --night:#0B100F; --on-night:#E8EDEB;
-  --shadow-card:none; --shadow-sheet:0 12px 32px rgba(0,0,0,0.5);
-  --wa-bg:#141B19; --wa-in:#1E2826; --wa-out:#1F3D2B; color-scheme:dark;}
 
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--text);font:14px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font:var(--type-body);-webkit-font-smoothing:antialiased}
 [hidden]{display:none!important}
 button,input,select,textarea{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -263,7 +234,8 @@ tr.click:hover td{background:var(--soft)}
 .logo{font-family:var(--display);font-weight:600;letter-spacing:-.01em}
 .logo .wm{font-size:20px;text-transform:lowercase}
 .logo svg.markimg{width:32px;height:32px;flex:none;display:block}
-header.top .logo svg.markimg{width:28px;height:28px}
+.logo svg.markimg.sm{width:24px;height:24px}
+
 header.top .logo .wm{font-size:17px}
 .logo svg.markimg rect{fill:var(--teal)}
 .logo svg.markimg rect.open{fill:none;stroke:var(--teal)}
@@ -287,27 +259,38 @@ td:last-child{font-family:var(--mono);font-size:13px}
 /* Pencil: Desk drafted, nobody approved yet */
 .card.draft{border:1.5px dashed var(--pencil);background:var(--pencil-ground);transition:border-color .2s,background .2s}
 .card.draft > h4{border-bottom-style:dashed;border-bottom-color:var(--line-strong)}
-.card.draft > h4 .kind::before{content:"Desk drafted · ";color:var(--ink-3)}
+.card.draft > h4 .kind::before{content:"Desk drafted · "}
+.card.draft .kind,.card.draft .why,.card.draft .note{color:var(--pencil-label)}
 .doc{border:1px dashed var(--pencil);background:var(--surface)}
 /* Ink: approved by a named person */
-.card.inked{border:1px solid var(--line);background:var(--surface)}
+.card.inked,.card.ctc{border:1px solid var(--line);background:var(--surface)}
 .card.inked .doc{border-style:solid;border-color:var(--line)}
-.inklabel{font-size:12px;color:var(--ontime);background:var(--ontime-soft);border-radius:6px;padding:1px 8px;font-weight:500}
+.inklabel{font:var(--type-caption);font-weight:500;color:var(--ontime);margin-left:auto}
 /* status pills: always a word, radius-sm */
 .pill{border-radius:6px}
 .p-acc{background:var(--surface-sunk);color:var(--ink-2)}
 /* stage tracker: equal segments, done + current teal, future sunk */
-.steps li i{height:6px;border-radius:999px;background:var(--surface-sunk)}
+/* StageTracker: equal 4px segments, done + current teal, future sunk; current also carries a "Now" tag */
+.steps{grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:var(--space-2)}
+.steps li i{height:4px;border-radius:var(--radius-full);background:var(--surface-sunk)}
 .steps li.done i,.steps li.now i{background:var(--teal)}
-.steps li span{color:var(--ink-3)}
+.steps li span{font:var(--type-label);color:var(--ink-3)}
+.steps li.done span{color:var(--ink-2)}
 .steps li.now span{color:var(--ink);font-weight:600}
+.nowtag{display:inline-block;font:500 11px/16px var(--font-sans);color:var(--teal-hover);background:var(--teal-soft);border-radius:var(--radius-sm);padding:0 6px;margin-left:2px}
+@media (max-width:560px){.steps{gap:6px}.steps li span{font-size:11px}}
 .prog i::after,.bars .b i{background:var(--teal)}
 .bars .b i.warn{background:var(--clock-bar)}
 .av{background:var(--teal-soft);color:var(--teal);font-family:var(--display)}
-.av svg{width:18px;height:18px}
+.av svg{width:16px;height:16px}
 .bubble{border-radius:4px 12px 12px 12px}
 .msg.me .bubble{background:var(--surface-sunk);color:var(--ink)}
 .ph-top{background:var(--night);color:var(--on-night)}
 .preview{background:var(--clock-soft);color:var(--clock)}
 .tagline{color:var(--ink-3);font-size:13px;margin-top:-16px;margin-bottom:20px}
 @media (max-width:760px){.sidenav{width:auto}}
+
+/* card header: label, then title, status on the right */
+.card h4 .kind{margin-right:0}
+.card h4 > .pill:first-of-type,.card h4 > .inklabel{margin-left:auto}
+.card.inked .c > .row:last-child{display:none}
