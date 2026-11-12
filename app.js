@@ -114,6 +114,7 @@ function seed() {
   cand("Lakshmi R.", 1, "Interview", "Feedback late (Arjun Mehta)", { late: true });
   cand("Sameer T.", 1, "Interview", "Round 1 on Fri 13 Nov");
   cand("Kiran S.", 1, "Offer", "Offer to build (₹12 L)");
+  cand("Faisal Khan", 3, "Offer", "Offer letter drafted · waiting for your approval");
   [["Megha D.", 48], ["Imran S.", 52], ["Tarun B.", 41], ["Pooja N.", 55]].forEach(([n, s]) => cand(n, 2, "Screened", `Excel test ${s}% (below 60%)`, { score: s, failed: true }));
   ["Rhea K.", "Vivek J."].forEach(n => cand(n, 2, "Applied", "New application"));
   ["Nisha P.", "Omkar S.", "Prerna V."].forEach(n => cand(n, 3, "Applied", "New application"));
@@ -126,6 +127,7 @@ function seed() {
     { id: id(), key: "chase", title: "Arjun Mehta hasn't given feedback on 2 candidates", ctx: "Backend Developer · 26 hours overdue · escalates to Vikram at 4 pm", owner: "Arjun Mehta", when: "Late", done: false },
     { id: id(), key: "letter", title: "Sneha joins Monday with no appointment letter", ctx: "Every joiner needs one before Day 1", owner: "hr", when: "Late", done: false },
     { id: id(), key: "offer", title: "Build Kiran's offer", ctx: "Backend Developer · ₹12 L · structure needs the 50% wages check", owner: "hr", when: "Today", done: false },
+    { id: id(), key: "faisalOffer", title: "Approve Faisal Khan's offer letter", ctx: "Customer Success Associate · ₹5.4 L · salary check passed · Desk drafted it at 5:40 pm IST", owner: "hr", when: "Today", done: false },
     { id: id(), key: "probation", title: "Start Priya's probation review", ctx: "Probation ends Mon 23 Nov · manager review is due before then", owner: "hr", when: "This week", done: false },
     { id: id(), key: "bulk", title: "Send rejection notes to 4 Operations Analyst candidates", ctx: "Below 60% on the Excel test · job-relevant reason drafted", owner: "hr", when: "This week", done: false },
     { id: id(), key: "laptop", title: "Laptop and email for Sneha", ctx: "Needed before Mon 16 Nov", owner: "Suresh (IT)", when: "This week", done: false },
@@ -279,7 +281,7 @@ function runTask(key, echo) {
   if (t.done) return say(`"${esc(t.title)}" is already done.`);
   if (key.startsWith("approval:")) { if (echo) me(t.title); return mode === "lead" ? reviewPending(Number(key.split(":")[1])) : say("Approvals go straight out in Solo setup."); }
   const map = { chase: ["Chase Arjun Mehta", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Reject candidates who failed the test", bulk],
-    laptop: ["Remind Suresh about Sneha's laptop", remindIT], kiranLetter: ["Draft Kiran's appointment letter", kiranLetter], kiranLaptop: ["Remind Suresh about Kiran's laptop", remindIT] };
+    laptop: ["Remind Suresh about Sneha's laptop", remindIT], kiranLetter: ["Draft Kiran's appointment letter", kiranLetter], faisalOffer: ["Review Faisal's offer letter", faisalOffer], kiranLaptop: ["Remind Suresh about Kiran's laptop", remindIT] };
   const m = map[key]; if (!m) return say("I can't do that one yet in this preview.");
   if (echo) me(m[0]); m[1]();
 }
@@ -416,6 +418,27 @@ function ctcBlock(comps) {
   <div class="row"><span class="pill ${r.passes ? "p-ok" : "p-late"}">Wages ${r.wagesPercent}% of pay</span><span class="note">${r.passes ? "Meets the 50% wages rule." : `Allowances are above half of pay. ${formatINR(r.deemedExtraWages)} would count as wages for PF and gratuity.`}</span></div>
   <div class="why">Calculated by fixed rules, not AI. Rule: ${esc(r.rule.citation)}. Status: ${esc(r.rule.status)}. Not legal advice.</div>`;
 }
+// Sample: an offer letter Desk has already prepared, waiting for a named approval. The salary check passes.
+const FAISAL = [
+  { name: "Basic + DA", kind: "basic", amount: 270000 }, { name: "HRA", kind: "hra", amount: 108000 },
+  { name: "Special allowance", kind: "special", amount: 140400 }, { name: "Employer PF", kind: "employer_pf", amount: 21600 }];
+function faisalOffer() {
+  if (task("faisalOffer").done) return say("Faisal's offer letter is already approved and sent.");
+  later(() => desk(`<div class="bubble">Faisal Khan's offer letter is ready. I prepared it at 5:40 pm IST from the approved Customer Success Associate role. Nothing has been sent.</div>
+  <div class="card ctc"><h4><span class="kind">Offer · CTC</span>Faisal Khan · Customer Success Associate <span class="pill p-ok">Check passed</span></h4><div class="c">${ctcBlock(FAISAL)}</div></div>
+  <div class="card draft"><h4><span class="kind">Approval</span>Offer letter · Faisal Khan <span class="pill p-warn">Waiting for ${esc(first())}</span></h4><div class="c">
+  <div class="doc">Dear Faisal,
+We are pleased to offer you the role of Customer Success Associate at Acme Fintech Pvt Ltd, Hyderabad.
+CTC: ₹5,40,000 per year (breakdown in Annexure A). Joining date: Mon 7 Dec 2026. Probation: 6 months.
+This offer is valid for 3 days from the date it is sent …</div>
+  <div class="why">Email to Faisal Khan. Within the role's budget (₹4.5–6 L). Template from the Clearstage playbook. Not legal advice.</div>
+  <div class="row"><button class="btn primary" type="button" data-a="sendFaisal">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div>
+  <div class="note">Nothing is sent until you approve it.</div></div></div>`));
+}
+ACT.sendFaisal = b => approve(b, "Faisal Khan's offer letter", () => {
+  closeTask("faisalOffer"); person("Faisal Khan").where = "Offer sent · valid 3 days";
+  say("Offer sent to Faisal by email, valid for 3 days. I'll remind him on day 2.");
+});
 function offer() {
   if (D.done.offerSent) return say("Kiran's offer has already gone out.");
   later(() => desk(`<div class="bubble">Kiran's offer at ₹12 L. I checked the structure before anything goes out.</div>
@@ -571,6 +594,7 @@ function route(t) {
   if (/\bsneha\b|\bappointment letter\b/.test(s)) return letter();
   if (/\bpipeline\b|\bboard\b/.test(s)) return pipeline();
   if (/\breject\b.*\b(failed|test|assessment)\b|\bfailed the test\b/.test(s)) return bulk();
+  if (/\bfaisal\b/.test(s)) return faisalOffer();
   if (/\bkiran\b.*\baccept/.test(s)) return accepted();
   if (/\bkiran\b|\boffer\b|\bctc\b/.test(s)) return offer();
   if (/\bprobation\b|\bpriya\b/.test(s)) return probation();
@@ -714,7 +738,7 @@ $("#view").addEventListener("keydown", e => { const r = e.target.closest("tr.cli
 
 /* ----- dashboards brought back from the Recruiter Desk design ----- */
 const NEXT = { "Kiran S.": ["offer", "Build Kiran's offer in Desk"], "Ankit Verma": ["chase", "Chase feedback in Desk"], "Lakshmi R.": ["chase", "Chase feedback in Desk"],
-  "Sneha Rao": ["letter", "Draft Sneha's letter in Desk"], "Priya Nair": ["probation", "Start Priya's review in Desk"] };
+  "Faisal Khan": ["faisalOffer", "Review the offer letter in Desk"], "Sneha Rao": ["letter", "Draft Sneha's letter in Desk"], "Priya Nair": ["probation", "Start Priya's review in Desk"] };
 // "Joined" is the person's status (employee), never a pipeline stage: the database role has 4 stages, Applied → Offer.
 const JOIN_STAGES = ["Offer accepted", "Documents", "Day 1", "Probation review"];
 function tracker(names, at, label) {
@@ -780,11 +804,12 @@ function extraView(head) {
       <div class="row">${task("chase").done ? "" : ask("Chase Arjun Mehta", "Chase late feedback with Desk", true)}${ask("Send Arjun Rao a confirmation for today's screen call", "Confirm Arjun Rao with Desk")}</div>`;
   }
   if (currentTab === "approvals") {
-    const pend = D.pending.length ? D.pending.map(p => `<div class="item"><span class="pill p-warn">Waiting</span><div class="t">${esc(p.what)}<small>Drafted by Ritu · also sent to ${esc(phoneLabel())} on WhatsApp</small></div><button class="btn primary" type="button" data-v="review" data-pid="${p.id}" data-what="${esc(p.what)}">Review in Desk</button></div>`).join("")
+    const seeded = task("faisalOffer") && !task("faisalOffer").done ? `<div class="item"><span class="pill p-warn">Waiting</span><div class="t">Offer letter · Faisal Khan, Customer Success Associate<small>Desk drafted · 5:40 pm IST · ₹5.4 L · salary check passed</small></div><button class="btn primary" type="button" data-v="task" data-key="faisalOffer">Review in Desk</button></div>` : "";
+    const pend = seeded || D.pending.length ? seeded + D.pending.map(p => `<div class="item"><span class="pill p-warn">Waiting</span><div class="t">${esc(p.what)}<small>Drafted by Ritu · also sent to ${esc(phoneLabel())} on WhatsApp</small></div><button class="btn primary" type="button" data-v="review" data-pid="${p.id}" data-what="${esc(p.what)}">Review in Desk</button></div>`).join("")
       : `<div class="emptyv">${mode === "solo" ? 'Nothing waiting. In Solo setup, what you approve in Desk goes out straight away. <button class="link" type="button" data-v="mode" data-mode="lead">Switch to Lead + juniors</button> to use the review queue.' : "Nothing waiting for your approval."}</div>`;
     return head("Approvals", "Nothing reaches a candidate or employee without a named approval") +
       `<div class="card"><h4><span class="kind">Waiting for ${esc(first())}</span></h4>${pend}</div>
-       <div class="card"><h4><span class="kind">Approval log</span></h4>${D.audit.length ? D.audit.map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} at ${a.at.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</small></div></div>`).join("") : '<div class="emptyv">No approvals yet today.</div>'}</div>`;
+       <div class="card"><h4><span class="kind">Approval log</span></h4>${D.audit.length ? D.audit.map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} · ${fmtIST(a.at)}</small></div></div>`).join("") : '<div class="emptyv">No approvals yet today.</div>'}</div>`;
   }
   if (currentTab === "insights") {
     const sent = D.people.filter(p => p.stage === "Rejected").length;
