@@ -208,3 +208,37 @@ tr.total td{font-weight:600;border-bottom:0}
 @media (max-width:560px){.authcard{padding:24px}.co{display:none}.msg.me .bubble{max-width:90%}}
 @media (prefers-reduced-motion:reduce){.msg,.tile.flash{animation:none}}
 .body > .work{min-width:0;flex:1}
+/* dashboards + chat box at the bottom of every screen */
+.maincol{display:flex;flex-direction:column;min-height:0;min-width:0}
+.maincol > .view,.maincol > .chat{flex:1;min-height:0}
+.sidenav .n.ai{background:var(--accent-soft);color:var(--accent-text)}
+.composer.compact .chips{display:none}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.stat .l{font-size:13px;color:var(--muted)}
+.stat .v{font-size:24px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:12px;font-weight:400;color:var(--muted)}
+.stat .v.bad{color:var(--late)}
+.cols{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.cols > .mainc{flex:999 1 420px;min-width:0;display:flex;flex-direction:column;gap:14px}
+.cols > .side{flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:14px}
+.suggest{font-size:13px;color:var(--text2);border:1px dashed var(--dash);background:var(--soft);border-radius:8px;padding:8px 12px;margin-top:6px}
+.suggest b{font-weight:400;color:var(--muted)}
+.bars{display:grid;gap:10px;font-size:13px;padding:14px}
+.bars div{display:grid;grid-template-columns:90px minmax(0,1fr) 40px;gap:10px;align-items:center}
+.bars span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.bars .b{height:8px;border-radius:4px;background:var(--hover);overflow:hidden}
+.bars .b i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.bars .b i.warn{background:var(--warn)}
+.steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;font-size:12px}
+.steps li i{display:block;height:4px;border-radius:2px;background:var(--line)}
+.steps li.done i{background:var(--accent)}
+.steps li span{display:block;margin-top:6px;color:var(--muted)}
+.steps li.now span{color:var(--text);font-weight:600}
+.setting{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px 14px;border-top:1px solid var(--line2);flex-wrap:wrap}
+.card h4 + .setting{border-top:0}
+.setting small{display:block;color:var(--muted)}
+tr.click{cursor:pointer}
+tr.click:hover td{background:var(--soft)}
+.back{border:0;background:none;color:var(--accent-text);cursor:pointer;padding:0;font-weight:500}
+@media (max-width:900px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}

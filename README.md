@@ -8,9 +8,12 @@ Live at **https://desk.crovantapartner.com** (GitHub Pages).
   - **Demo mode** (no Supabase keys in `config.js`): the code is shown on screen and data stays in your browser.
   - **Live mode**: Supabase Auth emails the code; your company and profile are saved in Postgres (Mumbai).
 - Pinned status strip (tiles link to their Check view) and a "Preview: sample data, nothing is sent" notice in the chat.
-- Left navigation: **Ask → Desk** (default) and **Check → Today · Hiring · People · Joiners & probation**, with count badges (Today turns red when something is late).
-  - Check views only read. Every button ("Do it with Desk", "Build Kiran's offer in Desk", "Fix with Desk", "Start with Desk") switches to the chat and runs the action there, through approval cards and the audit log.
-  - Today: all tasks with Late / Today / This week / Done filters. Hiring: role cards with stage bar and counts, tap for the board. People: everyone in one table with search and type filter. Lead + juniors adds an owner filter.
+- Left navigation (founder direction, 12 Nov: bring back the Recruiter Desk dashboards, chat box at the bottom):
+  - **Overview** (landing): stats, what needs you with Desk suggestions, coming-up interviews, pipeline, Desk insight, recent approvals.
+  - **Ask Desk**: the chat. A Desk chat box sits at the bottom of every screen; typing anywhere switches to Desk.
+  - **Work**: Today (tasks with Late / Today / This week / Done filters), Jobs (role cards with stage bars, tap for the board), Candidates (everyone in one searchable table; click anyone for their profile), Interviews (schedule and feedback status), Joiners & probation, Approvals (waiting queue and approval log).
+  - **Insights & admin**: Insights (sample metrics), Integrations (connection status), Settings (team setup, response targets, how Desk may act).
+  - Screens only read. Every button ("Do it with Desk", "Build Kiran's offer in Desk", "Review in Desk") switches to the chat and runs the action there, through approval cards and the audit log.
 - One data source: chat actions update the Check views and the strip immediately.
 - All 7 card types from the brief. Solo and Lead + juniors; in Lead + juniors, approvals wait in Today and on WhatsApp.
 - Free text is read by `lib/intent.js` (tested). Hiring requests like "Ek data analyst chahiye Bangalore mein, 8-10L" become the right role; Desk asks for anything missing. Anything it doesn't understand gets an honest "I can't do that yet in this preview", never a wrong action.
