@@ -13,11 +13,11 @@ function busy(btn, on, label) { btn.disabled = on; if (label) btn.textContent = 
 let pendingEmail = "", user = null, profile = null, resendTimer = null;
 
 $("#modeNote").textContent = auth.LIVE
-  ? "We'll email you a sign-in link. Check spam if it doesn't arrive in a minute."
+  ? "Can't find the email? Check Spam or Gmail's Updates tab."
   : "Demo mode: email sending isn't connected yet, so your code appears on the next screen.";
 if (auth.LIVE) {
-  document.querySelector("#emailForm .lead").textContent = "We'll email you a sign-in link. No password needed.";
-  $("#sendBtn").textContent = "Email me a sign-in link";
+  document.querySelector("#emailForm .lead").textContent = auth.EMAIL_HAS_CODE ? "We'll email you a sign-in link and a 6-digit code. No password needed." : "We'll email you a sign-in link. No password needed.";
+  $("#sendBtn").textContent = auth.EMAIL_HAS_CODE ? "Email me a sign-in code" : "Email me a sign-in link";
   auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden) return; user = u; await afterSignIn(); });
 }
 
@@ -32,10 +32,17 @@ $("#emailForm").addEventListener("submit", async e => {
     d.hidden = !r.demoCode;
     if (r.demoCode) d.innerHTML = `Demo mode: in the live version this code goes to your inbox. Your code is <b>${r.demoCode}</b>`;
     $("#code").value = ""; err("#codeErr");
-    if (auth.LIVE) $("#s-code .lead").innerHTML = `We sent a sign-in link to <b>${esc(pendingEmail)}</b>. Open it in this browser and you'll be signed in here. If the email shows a 6-digit code instead, enter it below.`;
+    if (auth.LIVE) {
+      const linkOnly = !auth.EMAIL_HAS_CODE;
+      $("#s-code h1").textContent = linkOnly ? "Click the link in your email" : "Check your email";
+      $("#s-code .lead").innerHTML = linkOnly
+        ? `We sent a sign-in link to <b>${esc(pendingEmail)}</b>. Open it in this browser and Clearstage opens, signed in. You can leave this page open.`
+        : `Enter the 6-digit code we sent to <b>${esc(pendingEmail)}</b>, or click the link in the same email.`;
+      $("#codeField").hidden = linkOnly; $("#verifyBtn").hidden = linkOnly;
+    }
     show("s-code"); $("#code").focus(); startResend();
   } catch (x) { err("#emailErr", x.message); }
-  finally { busy(btn, false, auth.LIVE ? "Email me a sign-in link" : "Send code"); }
+  finally { busy(btn, false, auth.LIVE ? (auth.EMAIL_HAS_CODE ? "Email me a sign-in code" : "Email me a sign-in link") : "Send code"); }
 });
 
 function startResend() {

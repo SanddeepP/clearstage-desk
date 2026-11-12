@@ -1,6 +1,7 @@
 // Sign-in with a one-time code sent to the user's email.
 // Live mode: Supabase Auth (email OTP). Demo mode: code shown on screen, profile kept in this browser.
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_HAS_CODE } from "./config.js";
+export { EMAIL_HAS_CODE };
 
 export const LIVE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 let sb = null;
