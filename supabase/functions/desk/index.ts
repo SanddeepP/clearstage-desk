@@ -16,6 +16,15 @@ const MODELS = {
 const TOKEN_CAP = Number(Deno.env.get("DESK_MONTHLY_TOKEN_CAP") ?? 2_000_000);
 const ALLOWED = (Deno.env.get("DESK_ALLOWED_ORIGINS") ?? "https://desk.crovantapartner.com,http://localhost:8000,http://localhost:8765").split(",");
 
+// New Supabase projects expose publishable keys; older ones SUPABASE_ANON_KEY. Either works for a user-scoped client.
+function publicKey(): string {
+  const legacy = Deno.env.get("SUPABASE_ANON_KEY");
+  if (legacy) return legacy;
+  const single = Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  if (single) return single;
+  try { const all = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") ?? "{}"); return all.default ?? Object.values(all)[0] as string; } catch { return ""; }
+}
+
 function cors(req: Request) {
   const origin = req.headers.get("origin") ?? "";
   return {
@@ -50,7 +59,7 @@ Deno.serve(async (req) => {
 
   const auth = req.headers.get("Authorization") ?? "";
   // Runs as the signed-in user: row-level security and the 003/004 guards apply to every tool call.
-  const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, { global: { headers: { Authorization: auth } } });
+  const sb = createClient(Deno.env.get("SUPABASE_URL")!, publicKey(), { global: { headers: { Authorization: auth } } });
   const { data: u } = await sb.auth.getUser();
   if (!u?.user) return json(req, { error: "Sign in first" }, 401);
   const { data: me } = await sb.rpc("current_member");
