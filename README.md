@@ -18,7 +18,7 @@ Live at **https://desk.crovantapartner.com** (GitHub Pages).
 - All 7 card types from the brief. Solo and Lead + juniors; in Lead + juniors, approvals wait in Today and on WhatsApp.
 - Free text is read by `lib/intent.js` (tested). Hiring requests like "Ek data analyst chahiye Bangalore mein, 8-10L" become the right role; Desk asks for anything missing. Anything it doesn't understand gets an honest "I can't do that yet in this preview", never a wrong action.
 - Guardrails: drafts until approved, approvals logged, 10-minute undo, fixed rejection reasons, protected-trait text blocked, "Arjun Mehta or Arjun Rao?".
-- `lib/ctc.js`: the 50% wages check and auto-fix in plain code. `npm test` runs 14 tests (CTC and request reading).
+- `lib/ctc.js`: the 50% wages check and auto-fix in plain code. `npm test` runs 17 tests (CTC and request reading), also on every push via GitHub Actions.
 - `supabase/migrations/001_schema.sql`, `002_scheduler.sql` and `supabase/seed.sql`: every table from the brief, row-level security, sign-up function, the task scheduler (reminders, then escalation, every 5 minutes via pg_cron), the `today_tasks` view, and Acme Fintech demo data.
 
 Desk's replies are still scripted. The AI agent with tools comes in Week 2 and real WhatsApp in Week 4.
