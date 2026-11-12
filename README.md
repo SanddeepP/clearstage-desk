@@ -50,3 +50,12 @@ python3 -m http.server 8000   # then open http://localhost:8000
 npm test                       # CTC rule tests
 ```
 Not legal advice. Every rule shows its citation and the status "awaiting legal review".
+
+## Desk agent (Supabase Edge Function)
+- Code: `supabase/functions/desk/index.ts` (HTTP + auth), `supabase/functions/_shared/agent.js` (tool loop), `tools.js` (tools → engine), `ctc.js` (shared with the web app).
+- Engine: `supabase/migrations/004_desk_agent.sql` — one database function per tool, run as the signed-in user, so row-level security and the 003 guards apply. Conversations in `desk_conversation`/`desk_message`, token use per model call in `ai_usage`.
+- API and card contract for web, phone and WhatsApp: `docs/desk-cards.md`.
+- Models: a small model picks tools (`DESK_MODEL_ROUTE`), a larger one only writes drafts (`DESK_MODEL_DRAFT`). Monthly token cap per company: `DESK_MONTHLY_TOKEN_CAP` (default 2,000,000).
+- Secret: `ANTHROPIC_API_KEY` in Supabase → Edge Functions → Secrets. Never in the repo.
+- Tests: `npm test` (agent loop with a scripted model, CTC, request reader) and `supabase/tests/desk_tools.sql` (every tool and attack, against a local Postgres with 001–004).
+- Deploy: `supabase functions deploy desk` (CLI), or paste `build/desk.bundle.ts` (made by `scripts/bundle-desk.sh`) into the dashboard editor.
