@@ -23,7 +23,11 @@ Live at **https://desk.crovantapartner.com** (GitHub Pages).
 
 Desk's replies are still scripted. The AI agent with tools comes in Week 2 and real WhatsApp in Week 4.
 
-## Turn on real email codes (Supabase)
+## Supabase (live since 12 Nov)
+Project `clearstage`, Mumbai (ap-south-1), organization Clearstage (free plan). Schema, scheduler (pg_cron, every 5 min) and seed are loaded; all 14 tables have row-level security. Site URL: https://desk.crovantapartner.com.
+Sign-in currently emails a **link** (Supabase's default template). To send 6-digit codes and lift the built-in email limit, connect an email sender (SMTP) and add `{{ .Token }}` to the "Magic link or OTP" template.
+
+## Setting up Supabase from scratch (reference)
 1. Create a project at supabase.com, region **Mumbai (ap-south-1)**.
 2. Database → Extensions: enable `pg_cron`. Then SQL editor → run `supabase/migrations/001_schema.sql`, `002_scheduler.sql`, then `supabase/seed.sql`.
 3. Authentication → URL configuration → Site URL: `https://desk.crovantapartner.com`.

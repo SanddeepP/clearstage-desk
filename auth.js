@@ -16,8 +16,8 @@ function loadScript(src) {
 async function client() {
   if (!LIVE) return null;
   if (!sb) {
-    await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js");
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true } });
+    await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js");
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, detectSessionInUrl: true, flowType: "implicit" } });
   }
   return sb;
 }
@@ -36,7 +36,7 @@ export async function sendCode(email) {
   if (!validEmail(email)) throw new Error("Enter a full email address, like you@gmail.com.");
   if (LIVE) {
     const c = await client();
-    const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + "/" } });
     if (error) throw new Error(friendly(error));
     return { demoCode: null };
   }
@@ -91,6 +91,13 @@ export async function saveProfile(user, p) {
   return memProfile;
 }
 
+/** Calls fn(user) when a sign-in completes elsewhere, e.g. the emailed link opened in another tab. */
+export async function onSignedIn(fn) {
+  if (!LIVE) return;
+  const c = await client();
+  c.auth.onAuthStateChange((event, session) => { if (event === "SIGNED_IN" && session) fn({ email: session.user.email, id: session.user.id }); });
+}
+
 export async function signOut() {
   if (LIVE) { const c = await client(); await c.auth.signOut(); }
   memSession = null; store.del("session");
@@ -100,6 +107,7 @@ function friendly(err) {
   const m = (err && err.message) || "";
   if (/rate limit|too many/i.test(m)) return "Too many codes requested. Wait a minute, then try again.";
   if (/expired|invalid/i.test(m)) return "That code is wrong or has expired. Send a new one.";
+  if (/signups? not allowed|disabled/i.test(m)) return "New sign-ups are switched off for this workspace. Ask the admin to invite you.";
   if (/network|fetch/i.test(m)) return "Couldn't reach the sign-in service. Check your connection and try again.";
   return m || "Something went wrong. Try again.";
 }
