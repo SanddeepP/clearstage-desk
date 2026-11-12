@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseHire, parseBudget } from "../lib/intent.js";
+import { parseHire, parseBudget, parseExperience, parseStart } from "../lib/intent.js";
 
 test("COO example: Hinglish data analyst request is read correctly", () => {
   const r = parseHire("Ek data analyst chahiye Bangalore mein, 8-10L");
-  assert.deepEqual(r, { intent: "hire", count: 1, title: "Data Analyst", city: "Bengaluru", budget: { min: 8, max: 10 } });
+  assert.equal(r.count, 1); assert.equal(r.title, "Data Analyst"); assert.equal(r.city, "Bengaluru"); assert.deepEqual(r.budget, { min: 8, max: 10 });
 });
 
 test("English sales request", () => {
@@ -24,7 +24,7 @@ test("unknown role words become the title", () => {
 
 test("budget number isn't mistaken for the head count", () => {
   const r = parseHire("need a backend developer, 12L, Hyderabad");
-  assert.equal(r.count, null); assert.equal(r.title, "Backend Developer"); assert.deepEqual(r.budget, { min: 12, max: 12 });
+  assert.equal(r.count, 1); assert.equal(r.countStated, false); assert.equal(r.title, "Backend Developer"); assert.deepEqual(r.budget, { min: 12, max: 12 });
 });
 
 test("non-hiring text returns null", () => {
@@ -36,4 +36,24 @@ test("budget formats", () => {
   assert.deepEqual(parseBudget("₹6.5 - 8 LPA"), { min: 6.5, max: 8 });
   assert.deepEqual(parseBudget("10 lakh"), { min: 10, max: 10 });
   assert.equal(parseBudget("no budget yet"), null);
+});
+
+test("COO review: years are experience, not openings; joining date captured", () => {
+  const r = parseHire("Need a QA engineer in Chennai, 6-8 LPA, 3 yrs, joining in 45 days");
+  assert.equal(r.count, 1); assert.equal(r.countStated, false);
+  assert.equal(r.title, "QA Engineer"); assert.equal(r.city, "Chennai");
+  assert.deepEqual(r.budget, { min: 6, max: 8 }); assert.equal(r.exp, "3+ years"); assert.equal(r.start, 45);
+});
+
+test("Hinglish experience and timeline", () => {
+  const r = parseHire("2 accountants chahiye Pune mein, 2-4 saal, 1 mahine mein join");
+  assert.equal(r.count, 2); assert.equal(r.title, "Accountant"); assert.equal(r.exp, "2–4 years"); assert.equal(r.start, 30);
+});
+
+test("experience and start helpers", () => {
+  assert.equal(parseExperience("5 years of experience"), "5+ years");
+  assert.equal(parseExperience("freshers ok"), "Freshers are fine");
+  assert.equal(parseStart("start within 2 months"), 60);
+  assert.equal(parseStart("immediate joiner"), 0);
+  assert.equal(parseStart("no date"), null);
 });

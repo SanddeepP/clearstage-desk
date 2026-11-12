@@ -42,7 +42,16 @@ $("#resend").addEventListener("click", async () => {
   catch (x) { err("#codeErr", x.message); }
 });
 $("#changeEmail").addEventListener("click", () => { show("s-email"); $("#email").focus(); });
-$("#code").addEventListener("input", e => { e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6); if (e.target.value.length === 6) $("#codeForm").requestSubmit(); });
+// Code box: digits only, cursor always at the end (a cursor jumping mid-box scrambled codes in testing)
+const codeEl = $("#code");
+const caretEnd = () => { const n = codeEl.value.length; try { codeEl.setSelectionRange(n, n); } catch {} };
+["click", "focus", "keyup", "select"].forEach(ev => codeEl.addEventListener(ev, () => requestAnimationFrame(caretEnd)));
+codeEl.addEventListener("input", () => {
+  const clean = codeEl.value.replace(/\D/g, "").slice(0, 6);
+  if (clean !== codeEl.value) codeEl.value = clean;
+  caretEnd();
+  if (clean.length === 6 && !$("#verifyBtn").disabled) $("#codeForm").requestSubmit();
+});
 
 $("#codeForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#codeErr");
@@ -60,9 +69,9 @@ async function afterSignIn() {
 
 $("#setupForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#setupErr");
-  const name = $("#fullName").value.trim(), company = $("#company").value.trim();
+  const name = $("#fullName").value.trim().split(/\s+/).map(cap).join(" "), company = $("#company").value.trim();
   const phone = $("#phone").value.replace(/[\s-]/g, "");
-  if (!name || !company) return err("#setupErr", "Add your name and company name.");
+  if (!name || !company) return err("#setupErr", "Add your first name and company name.");
   if (phone && !/^\+?\d{10,13}$/.test(phone)) return err("#setupErr", "Enter the WhatsApp number with country code, like +91 98765 43210.");
   const p = { name, company, city: $("#city").value.trim(), phone: phone ? (phone.startsWith("+") ? phone : "+91" + phone.slice(-10)) : "", setup: document.querySelector("input[name=setup]:checked").value };
   const btn = $("#setupBtn"); busy(btn, true, "Setting up…");
@@ -117,6 +126,19 @@ function seed() {
   return { roles, people, tasks, interviews, pending: [], audit: [], done: {} };
 }
 const roleOf = rid => D.roles.find(r => r.id === rid);
+const WHEN_ORDER = { Late: 0, Today: 1, "This week": 2, Done: 3 };
+function counts() {
+  const openTasks = D.tasks.filter(t => !t.done).sort((a, b) => WHEN_ORDER[a.when] - WHEN_ORDER[b.when]);
+  const activeCands = D.people.filter(p => p.type === "Candidate" && p.stage !== "Rejected" && p.stage !== "Hired");
+  return {
+    openTasks, lateTasks: openTasks.filter(t => t.when === "Late"),
+    activeCands, people: D.people.length,
+    openRoles: D.roles.filter(r => r.status === "Open").length,
+    joiners: D.people.filter(p => p.type === "Joiner"),
+    probDue: D.people.filter(p => p.probation && !["Confirmed", "Extended"].includes(p.probation.status) && !/^Scheduled/.test(p.probation.status)),
+  };
+}
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const person = name => D.people.find(p => p.name === name);
 const task = key => D.tasks.find(t => t.key === key);
 function closeTask(key) { const t = task(key); if (t && !t.done) { t.done = true; t.when = "Done"; } }
@@ -126,12 +148,13 @@ function stageCounts(rid) { const c = { Applied: 0, Screened: 0, Interview: 0, O
 const inner = $("#inner"), log = $("#log"), ph = $("#ph"), chipsEl = $("#chips");
 let mode = "solo", currentTab = "desk";
 const TABS = ["overview", "desk", "today", "hiring", "people", "interviews", "joiners", "approvals", "insights", "integrations", "settings"];
-const first = () => (profile?.name || "there").split(/\s+/)[0];
+const cap = w => w ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+const first = () => cap((profile?.name || "there").trim().split(/\s+/)[0]);
 const phoneLabel = () => profile?.phone ? `you · ${profile.phone}` : "you";
 const ownerName = o => o === "hr" ? (mode === "solo" ? "You" : "Ritu") : o === "lead" ? `${first()} (you)` : o;
 
 function openApp() {
-  $("#coLine").textContent = `${profile.company} · preview with Acme Fintech sample data`;
+  $("#coLine").textContent = "Acme Fintech · 42 people · Hyderabad · sample data";
   init(profile.setup === "lead_juniors" ? "lead" : "solo");
   show("s-app"); showTab();
 }
@@ -143,27 +166,26 @@ function init(m) {
 }
 
 function paint() {
-  const open = D.tasks.filter(t => !t.done);
-  const late = open.filter(t => t.when === "Late").length;
-  const joiners = D.people.filter(p => p.type === "Joiner");
-  const prob = D.people.filter(p => p.probation && !["Confirmed", "Extended"].includes(p.probation.status));
-  set("#t-roles", D.roles.filter(r => r.status === "Open").length); set("#t-late", late); set("#t-join", joiners.length); set("#t-prob", prob.length); set("#t-queue", D.pending.length);
-  $("#t-late").classList.toggle("late", late > 0);
+  const c = counts();
+  set("#t-roles", c.openRoles); set("#t-late", c.lateTasks.length); set("#t-join", c.joiners.length); set("#t-prob", c.probDue.length); set("#t-queue", D.pending.length);
+  $("#t-late").classList.toggle("late", c.lateTasks.length > 0);
   $("#t-queue").hidden = mode !== "lead";
   $("#who").textContent = mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
   $("#m-solo").setAttribute("aria-pressed", mode === "solo"); $("#m-lead").setAttribute("aria-pressed", mode === "lead");
-  const nt = $("#n-today"); nt.textContent = open.length || ""; nt.classList.toggle("hot", late > 0);
-  $("#n-hiring").textContent = D.roles.filter(r => r.status === "Open").length || "";
-  $("#n-people").textContent = D.people.length;
-  $("#n-joiners").textContent = (joiners.length + prob.length) || "";
+  const badge = (sel, n, label, hot) => { const el = $(sel); el.textContent = n || ""; el.title = n ? label : ""; el.setAttribute("aria-label", n ? label : ""); el.classList.toggle("hot", !!hot); };
+  badge("#n-today", c.openTasks.length, plural(c.openTasks.length, "open task") + `, ${c.lateTasks.length} late`, c.lateTasks.length > 0);
+  badge("#n-hiring", c.openRoles, plural(c.openRoles, "open role"));
+  badge("#n-people", c.activeCands.length, plural(c.activeCands.length, "active candidate"));
+  badge("#n-joiners", c.joiners.length + c.probDue.length, `${plural(c.joiners.length, "joiner")}, ${plural(c.probDue.length, "probation review")} due`);
   const ivLate = D.interviews.filter(i => person(i.cand)?.late).length;
-  const ni = $("#n-interviews"); ni.textContent = D.interviews.length; ni.classList.toggle("hot", ivLate > 0);
-  const na = $("#n-approvals"); na.textContent = D.pending.length || ""; na.classList.toggle("hot", D.pending.length > 0);
+  badge("#n-interviews", D.interviews.length, plural(D.interviews.length, "interview") + (ivLate ? `, ${ivLate} with late feedback` : ""), ivLate > 0);
+  badge("#n-approvals", D.pending.length, plural(D.pending.length, "approval") + " waiting", D.pending.length > 0);
   if (currentTab !== "desk") renderTab();
 }
 function set(sel, v) { const el = $(sel), b = el.querySelector("b"); if (b.textContent !== String(v)) { b.textContent = v; el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); } }
 const scroll = () => { log.scrollTop = log.scrollHeight; };
-function me(t) { const d = document.createElement("div"); d.className = "msg me"; d.innerHTML = `<div class="bubble">${esc(t)}</div>`; inner.append(d); scroll(); }
+let chipTimer;
+function me(t) { chipsEl.innerHTML = ""; clearTimeout(chipTimer); chipTimer = setTimeout(() => { if (!chipsEl.children.length) defaults(); }, 1500); const d = document.createElement("div"); d.className = "msg me"; d.innerHTML = `<div class="bubble">${esc(t)}</div>`; inner.append(d); scroll(); }
 function desk(html) { const d = document.createElement("div"); d.className = "msg"; d.innerHTML = `<div class="av" aria-hidden="true">D</div><div class="mbody">${html}</div>`; inner.append(d); bind(d); scroll(); return d; }
 const later = (fn, ms = 450) => setTimeout(fn, ms);
 const say = t => desk(`<div class="bubble">${t}</div>`);
@@ -183,7 +205,7 @@ function wa(to, text, acts) {
 function reply(t) { const d = document.createElement("div"); d.className = "wam out"; d.textContent = t; ph.append(d); ph.scrollTop = ph.scrollHeight; }
 
 function defaults() {
-  chips([["What's on today?", brief], ["Chase Arjun", chase], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
+  chips([["What's on today?", brief], ["Chase Arjun", () => route("Chase Arjun")], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
     ["Reject candidates who failed the test", bulk], ["Start Priya's probation review", probation], ["Wrap up my day", wrap]]);
 }
 
@@ -219,10 +241,10 @@ function reviewPending(pid) {
 
 function brief() {
   const h = new Date().getHours(), hi = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
-  const open = D.tasks.filter(t => !t.done && t.when !== "This week" || (!t.done && t.key === "probation")).slice(0, 4);
+  const c = counts(), open = c.openTasks;
   const pill = w => w === "Late" ? "p-late" : w === "Today" ? "p-warn" : "p-acc";
   desk(`<div class="bubble">${hi}, ${esc(first())}. Here's your HR for today. About 15 minutes of work.</div>
-  <div class="card"><h4><span class="kind">Brief</span>${D.tasks.filter(t => !t.done && t.when === "Late").length ? `<span class="pill p-late">${D.tasks.filter(t => !t.done && t.when === "Late").length} late</span>` : '<span class="pill p-ok">Nothing late</span>'}</h4>
+  <div class="card"><h4><span class="kind">Brief · ${plural(open.length, "open task")}</span>${c.lateTasks.length ? `<span class="pill p-late">${c.lateTasks.length} late</span>` : '<span class="pill p-ok">Nothing late</span>'}</h4>
    ${open.length ? open.map(t => `<div class="item"><span class="pill ${pill(t.when)}">${esc(t.when === "This week" ? "Due soon" : t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)}</small></div><button class="btn primary" type="button" data-a="doTask" data-key="${esc(t.key)}">Do it</button></div>`).join("") : '<div class="item"><div class="t">All clear for today.</div></div>'}
   </div>`);
   defaults();
@@ -232,7 +254,7 @@ function runTask(key, echo) {
   const t = task(key); if (!t) return;
   if (t.done) return say(`"${esc(t.title)}" is already done.`);
   if (key.startsWith("approval:")) { if (echo) me(t.title); return mode === "lead" ? reviewPending(Number(key.split(":")[1])) : say("Approvals go straight out in Solo setup."); }
-  const map = { chase: ["Chase Arjun", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Reject candidates who failed the test", bulk],
+  const map = { chase: ["Chase Arjun Mehta", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Reject candidates who failed the test", bulk],
     laptop: ["Remind Suresh about Sneha's laptop", remindIT], kiranLetter: ["Draft Kiran's appointment letter", kiranLetter], kiranLaptop: ["Remind Suresh about Kiran's laptop", remindIT] };
   const m = map[key]; if (!m) return say("I can't do that one yet in this preview.");
   if (echo) me(m[0]); m[1]();
@@ -313,32 +335,32 @@ let draftRole = null;
 function hireFrom(text) {
   const r = parseHire(text);
   if (!r) return honest();
-  draftRole = { title: r.title, count: r.count, city: r.city, budget: r.budget, exp: null, start: null };
+  draftRole = { title: r.title, count: r.count, countStated: r.countStated, city: r.city, budget: r.budget, exp: r.exp, start: r.start };
   later(askRoleGaps);
 }
 function askRoleGaps() {
   const d = draftRole;
-  const parts = [`${d.count ?? "?"} × ${esc(d.title)}`, d.city ? esc(d.city) : null, d.budget ? fmtBudget(d.budget) : null].filter(Boolean).join(", ");
-  if (d.count == null) { say(`Got it: <b>${parts}</b>. How many people do you need?`); return chips([["1", () => fill("count", 1)], ["2", () => fill("count", 2)], ["3", () => fill("count", 3)]]); }
+  const parts = [`${d.count} × ${esc(d.title)}`, d.city ? esc(d.city) : null, d.budget ? fmtBudget(d.budget) : null, d.exp ? esc(d.exp) : null, d.start != null ? startLabel(d.start) : null].filter(Boolean).join(", ");
   if (!d.city) { say(`Got it: <b>${parts}</b>. Which city?`); return chips([["Hyderabad", () => fill("city", "Hyderabad")], ["Bengaluru", () => fill("city", "Bengaluru")], ["Pune", () => fill("city", "Pune")], ["Remote", () => fill("city", "Remote")]]); }
   if (!d.budget) { say(`Got it: <b>${parts}</b>. What's the CTC budget per person?`); return chips([["₹4–6 L", () => fill("budget", { min: 4, max: 6 })], ["₹6–10 L", () => fill("budget", { min: 6, max: 10 })], ["₹10–15 L", () => fill("budget", { min: 10, max: 15 })]]); }
   if (!d.exp) { say(`Got it: <b>${parts}</b>. How much experience?`); return chips([["Freshers are fine", () => fill("exp", "Freshers are fine")], ["1–3 years", () => fill("exp", "1–3 years")], ["3–6 years", () => fill("exp", "3–6 years")]]); }
-  if (!d.start) { say("When do you need them to start?"); return chips([["Within 30 days", () => fill("start", 30)], ["Within 60 days", () => fill("start", 60)]]); }
+  if (d.start == null) { say(`Got it: <b>${parts}</b>. When do you need them to start?`); return chips([["Within 30 days", () => fill("start", 30)], ["Within 60 days", () => fill("start", 60)]]); }
   roleCard();
 }
+const startLabel = n => n === 0 ? "Immediately" : `Within ${n} days`;
 function fill(k, v) { draftRole[k] = v; later(askRoleGaps, 250); }
 function roleCard() {
   const d = draftRole;
   desk(`<div class="bubble">Here's the role. Check it, then send it for approval.</div>
   <div class="card draft"><h4><span class="kind">Approval</span>${esc(d.title)} · ${esc(d.city)} · ${d.count} opening${d.count > 1 ? "s" : ""} <span class="pill p-acc">Needs approval</span></h4><div class="c">
-  <table><tr><td>Budget</td><td>${fmtBudget(d.budget)} CTC each</td></tr><tr><td>Experience</td><td>${esc(d.exp)}</td></tr><tr><td>Stages</td><td>Applied → Screened → Interview → Offer</td></tr><tr><td>Start</td><td>Within ${d.start} days</td></tr><tr><td>Job description</td><td>Draft ready to review</td></tr></table>
+  <table><tr><td>Budget</td><td>${fmtBudget(d.budget)} CTC each</td></tr><tr><td>Experience</td><td>${esc(d.exp)}</td></tr><tr><td>Stages</td><td>Applied → Screened → Interview → Offer</td></tr><tr><td>Openings</td><td>${d.count}${d.countStated ? "" : " (you didn't say how many, so I assumed 1)"}</td></tr><tr><td>Start</td><td>${startLabel(d.start)}</td></tr><tr><td>Job description</td><td>Draft ready to review</td></tr></table>
   <div class="row"><button class="btn primary" type="button" data-a="sendRole" data-once>Send for approval on WhatsApp</button><button class="btn" type="button" data-a="noop">Edit JD</button></div></div></div>`);
   defaults();
 }
 ACT.sendRole = () => {
   const d = { ...draftRole };
   say(`Sent to ${esc(phoneLabel())} on WhatsApp. One word approves it.`);
-  wa(phoneLabel(), `New role to approve: <b>${d.count} × ${esc(d.title)}, ${esc(d.city)}</b>, ${fmtBudget(d.budget)} each, start within ${d.start} days. Reply YES to approve.`, [
+  wa(phoneLabel(), `New role to approve: <b>${d.count} × ${esc(d.title)}, ${esc(d.city)}</b>, ${fmtBudget(d.budget)} each, ${esc(d.exp)}, start ${startLabel(d.start).toLowerCase()}. Reply YES to approve.`, [
     ["YES", () => { addRole(d, d.count); logApproval(`${d.title} role`, first()); paint(); say(`<span class="pill p-ok">Approved by ${esc(first())}</span> ${esc(d.title)} is live. I'll acknowledge every applicant within 24 hours.`); }],
     ...(d.count > 1 ? [["Make it 1 opening", () => { addRole(d, 1); logApproval(`${d.title} role (1 opening)`, first()); paint(); say("Approved with 1 opening. I've updated the role and it's live."); }]] : [])]);
 };
@@ -476,17 +498,17 @@ function route(t) {
     say("I can't use that as a rejection reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period.");
     return chips([["Show job-relevant reasons", () => reasonPicker("this candidate")]]);
   }
-  if (/\barjun\b/.test(s) && !/\b(rao|mehta)\b/.test(s) && !/\bchase\b/.test(s)) {
+  if (/\barjun\b/.test(s) && !/\b(rao|mehta)\b/.test(s)) {
     say("Do you mean Arjun Mehta (interviewer) or Arjun Rao (candidate, Customer Success Associate)?");
     return chips([["Arjun Mehta", chase], ["Arjun Rao", () => openCandidateNoEcho("Arjun Rao")]]);
   }
   const about = s.match(/^(?:tell me about|who is|show)\s+(.+)$/);
   if (about) { const p = D.people.find(x => x.name.toLowerCase() === about[1].trim().replace(/[?.]$/, "")); if (p) return openCandidateNoEcho(p.name); }
   if (/\bconfirm(ation)?\b/.test(s) && /\b(arjun rao|screen call)\b/.test(s)) return confirmScreen();
-  if (/\baction plan\b/.test(s)) return later(() => { say(`Here's a plan to get feedback on time above 90%:<br>1. Nudge interviewers 4 hours after each interview, on WhatsApp.<br>2. Escalate to the hiring manager at 24 hours.<br>3. Add a second Engineering interviewer to share the load.<br>4. Review feedback times every Monday in the brief.`); chips([["Chase Arjun", chase], ["What's on today?", brief]]); });
+  if (/\baction plan\b/.test(s)) return later(() => { say(`Here's a plan to get feedback on time above 90%:<br>1. Nudge interviewers 4 hours after each interview, on WhatsApp.<br>2. Escalate to the hiring manager at 24 hours.<br>3. Add a second Engineering interviewer to share the load.<br>4. Review feedback times every Monday in the brief.`); chips([["Chase Arjun Mehta", chase], ["What's on today?", brief]]); });
   if (/\b(monthly|month)\b.*\b(summary|report)\b/.test(s)) { say("Monthly summaries come with the full Desk agent. Here's today's summary for now."); return wrap(); }
   const hire = parseHire(t);
-  if (hire) { draftRole = { title: hire.title, count: hire.count, city: hire.city, budget: hire.budget, exp: null, start: null }; return later(askRoleGaps); }
+  if (hire) { draftRole = { title: hire.title, count: hire.count, countStated: hire.countStated, city: hire.city, budget: hire.budget, exp: hire.exp, start: hire.start }; return later(askRoleGaps); }
   if (/\bchase\b|\bfeedback\b|\barjun mehta\b/.test(s)) return chase();
   if (/\bsneha\b|\bappointment letter\b/.test(s)) return letter();
   if (/\bpipeline\b|\bboard\b/.test(s)) return pipeline();
@@ -582,9 +604,12 @@ function renderTab() {
           ${actions ? `<div class="row">${actions}</div>` : ""}</div></div>`; })() : "");
   } else if (currentTab === "people") {
     const q = V.q.trim().toLowerCase();
+    const rank = p => p.late ? 0 : p.stage === "Offer" ? 1 : p.type === "Joiner" ? 2 : p.probation && p.probation.status === "Review due" ? 3 : p.failed && p.stage !== "Rejected" ? 4 : p.stage === "Interview" ? 5 : p.stage === "Rejected" ? 9 : 6;
     const list = D.people.filter(p => (V.type === "All" || p.type === V.type) && ownerMatch(p.owner) &&
-      (!q || [p.name, p.roleTitle, roleOf(p.role)?.title, p.where].join(" ").toLowerCase().includes(q)));
-    html = head("Candidates & people", "Everyone from candidate to employee, in one list") +
+      (!q || [p.name, p.roleTitle, roleOf(p.role)?.title, p.where].join(" ").toLowerCase().includes(q)))
+      .map((p, i) => [p, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
+    const cc = counts();
+    html = head("Candidates & people", `${plural(cc.activeCands.length, "active candidate")} · ${cc.people} people in total · needs action first`) +
       `<div class="toolbar"><label class="sr" for="pq">Search people</label><input type="search" id="pq" data-vf="q" placeholder="Search by name, role or status" value="${esc(V.q)}">
        <label class="sr" for="ptype">Type</label><select id="ptype" data-vf="type">${["All", "Candidate", "Joiner", "Employee"].map(o => `<option${V.type === o ? " selected" : ""}>${o}</option>`).join("")}</select>${ownerFilterHtml()}</div>
       <div class="card"><div class="tablewrap"><table><tr><th>Name</th><th>Type</th><th>Role</th><th>Where they are</th><th>Owner</th></tr>
@@ -660,23 +685,23 @@ function extraView(head) {
 
   if (currentTab === "overview") {
     const h = new Date().getHours(), hi = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
-    const top = open.filter(t => t.when !== "This week").concat(open.filter(t => t.when === "This week")).slice(0, 4);
+    const top = counts().openTasks.slice(0, 4);
     const max = Math.max(1, ...["Applied", "Screened", "Interview", "Offer"].map(stageTot));
-    return head(`${hi}, ${esc(first())}`, `${open.length} things need you this week, ${late.length} of them late.`, ask("What's on today?", "Ask Desk for today's brief", true)) +
+    return head(`${hi}, ${esc(first())}`, `${plural(open.length, "open task")} this week, ${late.length} late.`, ask("What's on today?", "Ask Desk for today's brief", true)) +
       `<div class="stats">
-        <div class="stat"><div class="l">Active candidates</div><div class="v">${cands.length}</div></div>
+        <div class="stat"><div class="l">Active candidates</div><div class="v">${counts().activeCands.length}</div></div>
         <div class="stat"><div class="l">Open roles</div><div class="v">${D.roles.filter(r => r.status === "Open").length}</div></div>
         <div class="stat"><div class="l">Joining this week</div><div class="v">${D.people.filter(p => p.type === "Joiner").length}</div></div>
-        <div class="stat"><div class="l">Late items</div><div class="v${late.length ? " bad" : ""}">${late.length}</div></div>
+        <div class="stat"><div class="l">Late tasks</div><div class="v${late.length ? " bad" : ""}">${late.length}</div></div>
       </div>
       <div class="cols"><div class="mainc">
-        <div class="card"><h4><span class="kind">Needs you</span><a href="#today" class="link" style="font-size:13px;font-weight:500">See all</a></h4>
+        <div class="card"><h4><span class="kind">Needs you</span><a href="#today" class="link" style="font-size:13px;font-weight:500">${top.length < open.length ? `Top ${top.length} of ${open.length} · see all` : "See all"}</a></h4>
         ${top.length ? top.map(t => `<div class="item"><span class="pill ${whenPill(t.when)}">${esc(t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)}</small>${t.key === "chase" ? '<div class="suggest"><b>Desk suggests:</b> nudge Arjun on WhatsApp now and escalate to Vikram at 4 pm.</div>' : t.key === "offer" ? '<div class="suggest"><b>Desk suggests:</b> fix the salary structure before sending; it fails the 50% wages check.</div>' : ""}</div><button class="btn${t.when === "Late" ? " primary" : ""}" type="button" data-v="task" data-key="${esc(t.key)}">Do it with Desk</button></div>`).join("") : '<div class="emptyv">All clear.</div>'}</div>
         <div class="card"><h4><span class="kind">Recent activity</span></h4>${D.audit.length ? D.audit.slice(-4).reverse().map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} at ${a.at.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</small></div></div>`).join("") : '<div class="emptyv">Nothing approved yet today. Actions you take in Desk show up here.</div>'}</div>
       </div><div class="side">
         <div class="card"><h4><span class="kind">Coming up</span><a href="#interviews" class="link" style="font-size:13px;font-weight:500">Interviews</a></h4>${D.interviews.filter(i => i.confirmed !== undefined).map(i => `<div class="item"><div class="t">${esc(i.cand)}<small>${esc(i.when)} · ${esc(roleOf(i.role).title)}</small></div><span class="pill ${ivStatus(i)[0]}">${ivStatus(i)[1]}</span></div>`).join("")}</div>
         <div class="card"><h4><span class="kind">Pipeline</span><a href="#hiring" class="link" style="font-size:13px;font-weight:500">Jobs</a></h4><div class="bars">${["Applied", "Screened", "Interview", "Offer"].map(s => `<div><span>${s}</span><span class="b"><i style="width:${(stageTot(s) / max) * 100}%"></i></span><span>${stageTot(s)}</span></div>`).join("")}</div></div>
-        <div class="card"><h4><span class="kind">Desk insight</span></h4><div class="c"><div class="suggest" style="margin:0">Engineering interview feedback is the main delay this week: 2 scorecards are past 24 hours. Chasing them clears the Backend Developer pipeline.</div>${ask("Chase Arjun", "Fix it with Desk")}</div></div>
+        <div class="card"><h4><span class="kind">Desk insight</span></h4><div class="c"><div class="suggest" style="margin:0">Engineering interview feedback is the main delay this week: 2 scorecards are past 24 hours. Chasing them clears the Backend Developer pipeline.</div>${ask("Chase Arjun Mehta", "Fix it with Desk")}</div></div>
       </div></div>`;
   }
   if (currentTab === "interviews") {
@@ -684,7 +709,7 @@ function extraView(head) {
       `<div class="card"><div class="tablewrap"><table><tr><th>When</th><th>Candidate</th><th>Role</th><th>Round</th><th>Panel</th><th>Status</th></tr>
       ${D.interviews.map(i => { const [pc, pl] = ivStatus(i), p = person(i.cand); return `<tr class="click" data-v="person" data-pid="${p.id}" tabindex="0"><td>${esc(i.when)}</td><td style="font-weight:500">${esc(i.cand)}</td><td>${esc(roleOf(i.role).title)}</td><td>${esc(i.round)}</td><td>${esc(i.panel)}</td><td><span class="pill ${pc}">${pl}</span></td></tr>`; }).join("")}
       </table></div></div>
-      <div class="row">${task("chase").done ? "" : ask("Chase Arjun", "Chase late feedback with Desk", true)}${ask("Send Arjun Rao a confirmation for today's screen call", "Confirm Arjun Rao with Desk")}</div>`;
+      <div class="row">${task("chase").done ? "" : ask("Chase Arjun Mehta", "Chase late feedback with Desk", true)}${ask("Send Arjun Rao a confirmation for today's screen call", "Confirm Arjun Rao with Desk")}</div>`;
   }
   if (currentTab === "approvals") {
     const pend = D.pending.length ? D.pending.map(p => `<div class="item"><span class="pill p-warn">Waiting</span><div class="t">${esc(p.what)}<small>Drafted by Ritu · also sent to ${esc(phoneLabel())} on WhatsApp</small></div><button class="btn primary" type="button" data-v="review" data-pid="${p.id}" data-what="${esc(p.what)}">Review in Desk</button></div>`).join("")
@@ -695,12 +720,12 @@ function extraView(head) {
   }
   if (currentTab === "insights") {
     const sent = D.people.filter(p => p.stage === "Rejected").length;
-    return head("Insights", "How hiring is running this month · sample figures", ask("Prepare a monthly recruitment summary for the founder", "Ask Desk for a summary")) +
+    return head("Insights", "How hiring is running this month · all figures are sample data", ask("Prepare a monthly recruitment summary for the founder", "Ask Desk for a summary")) +
       `<div class="stats">
         <div class="stat"><div class="l">First reply within 24h</div><div class="v">92% <small>target 95%</small></div></div>
         <div class="stat"><div class="l">Feedback within 24h</div><div class="v">${task("chase").done ? "90%" : "87%"} <small>target 90%</small></div></div>
         <div class="stat"><div class="l">Average days to hire</div><div class="v">34</div></div>
-        <div class="stat"><div class="l">Candidates closed with a reason</div><div class="v">${sent}</div></div>
+        <div class="stat"><div class="l">Candidates told the outcome, with a reason</div><div class="v">100% <small>within 7 days</small></div></div>
       </div>
       <div class="cols"><div class="mainc"><div class="card"><h4><span class="kind">Days spent in each stage</span>All roles, average</h4><div class="bars">
         <div><span>Applied</span><span class="b"><i style="width:30%"></i></span><span>4.2</span></div>
@@ -720,20 +745,22 @@ function extraView(head) {
        <p class="note">Live connections need your approval and a security review. Nothing is connected in this preview.</p>`;
   }
   if (currentTab === "settings") {
-    return head("Settings", `${esc(profile?.company || "Your company")} · ${esc(profile?.city || "")}`) +
+    return head("Settings", "Acme Fintech · Hyderabad · sample company for this preview") +
       `<div class="card"><h4><span class="kind">Team setup</span></h4>
         <div class="setting"><div><b style="font-weight:500">Who handles HR and hiring</b><small>${mode === "solo" ? "Just me: what I approve goes out straight away" : "Me and juniors: anything reaching a candidate or employee needs my approval"}</small></div>
         <div class="seg" role="group" aria-label="Team setup"><button type="button" data-v="mode" data-mode="solo" aria-pressed="${mode === "solo"}">Solo</button><button type="button" data-v="mode" data-mode="lead" aria-pressed="${mode === "lead"}">Lead + juniors</button></div></div>
         <div class="setting"><div><b style="font-weight:500">Separate recruiting and HR teams</b><small>Handoff at offer accepted</small></div><span class="pill p-mut">Coming later</span></div></div>
-      <div class="card"><h4><span class="kind">Response targets</span></h4>
+      <div class="card"><h4><span class="kind">Response targets</span><span class="pill p-mut">Automatic reminders: planned</span></h4>
         <div class="setting"><div><b style="font-weight:500">First reply to applicants</b><small>Escalates to the hiring lead when missed</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Interview feedback</b><small>Reminder at 4 hours, escalation at 24 hours</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Probation review</b><small>Manager review due 15 days before the end date</small></div><span class="pill p-mut">15 days</span></div></div>
       <div class="card"><h4><span class="kind">How Desk may act</span></h4>
-        <div class="setting"><div><b style="font-weight:500">Drafts only</b><small>Nothing reaches a candidate or employee without a named approval</small></div><span class="pill p-ok">Always on</span></div>
-        <div class="setting"><div><b style="font-weight:500">Rejection reasons</b><small>Fixed job-relevant list; age, gender, marital status, religion, caste and pregnancy are blocked</small></div><span class="pill p-ok">Always on</span></div>
-        <div class="setting"><div><b style="font-weight:500">Salary and law checks</b><small>Calculated by fixed rules, never by AI. Awaiting legal review.</small></div><span class="pill p-ok">Always on</span></div>
-        <div class="setting"><div><b style="font-weight:500">Data</b><small>Stored in India (Mumbai). Aadhaar masked. Not used to train AI.</small></div><span class="pill p-ok">Always on</span></div></div>`;
+        <div class="setting"><div><b style="font-weight:500">Drafts only</b><small>Nothing reaches a candidate or employee without a named approval</small></div><span class="pill p-ok">Working in preview</span></div>
+        <div class="setting"><div><b style="font-weight:500">Rejection reasons</b><small>Fixed job-relevant list; age, gender, marital status, religion, caste and pregnancy are blocked</small></div><span class="pill p-ok">Working in preview</span></div>
+        <div class="setting"><div><b style="font-weight:500">Salary and law checks</b><small>Calculated by fixed rules, never by AI. Awaiting legal review.</small></div><span class="pill p-ok">Working in preview</span></div>
+        <div class="setting"><div><b style="font-weight:500">Data stored in India (Mumbai)</b><small>This preview keeps sample data in your browser only</small></div><span class="pill p-mut">Planned</span></div>
+        <div class="setting"><div><b style="font-weight:500">Aadhaar masked, consent recorded at upload</b><small>Built into the database design, not live yet</small></div><span class="pill p-mut">Planned</span></div>
+        <div class="setting"><div><b style="font-weight:500">No training on customer data</b><small>Applies once the AI model is connected</small></div><span class="pill p-mut">Planned</span></div></div>`;
   }
   return "";
 }
