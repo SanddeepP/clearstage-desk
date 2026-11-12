@@ -199,7 +199,8 @@ function set(sel, v) { const el = $(sel), b = el.querySelector("b"); if (b.textC
 const scroll = () => { log.scrollTop = log.scrollHeight; };
 let chipTimer;
 function me(t) { chipsEl.innerHTML = ""; clearTimeout(chipTimer); chipTimer = setTimeout(() => { if (!chipsEl.children.length) defaults(); }, 1500); const d = document.createElement("div"); d.className = "msg me"; d.innerHTML = `<div class="bubble">${esc(t)}</div>`; inner.append(d); scroll(); }
-function desk(html) { const d = document.createElement("div"); d.className = "msg"; d.innerHTML = `<div class="av" aria-hidden="true">D</div><div class="mbody">${html}</div>`; inner.append(d); bind(d); scroll(); return d; }
+const MARK_SM = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="0" y="12" width="4" height="4" rx="0.75" fill="currentColor"/><rect x="4" y="8" width="4" height="4" rx="0.75" fill="currentColor"/><rect x="8" y="4" width="4" height="4" rx="0.75" fill="currentColor"/><rect x="12.5" y="0.5" width="3" height="3" rx="0.5" fill="none" stroke="currentColor" stroke-width="1"/></svg>';
+function desk(html) { const d = document.createElement("div"); d.className = "msg"; d.innerHTML = `<div class="av" aria-hidden="true">${MARK_SM}</div><div class="mbody">${html}</div>`; inner.append(d); bind(d); scroll(); return d; }
 const later = (fn, ms = 450) => setTimeout(fn, ms);
 const say = t => desk(`<div class="bubble">${t}</div>`);
 function chips(list) { chipsEl.innerHTML = ""; list.forEach(([label, fn]) => { const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = label; b.onclick = () => { me(label); fn(); }; chipsEl.append(b); }); }
@@ -223,11 +224,21 @@ function defaults() {
 }
 
 // Pencil & Ink: AI output is a draft until a named person approves it. Every approval is logged.
-function logApproval(what, by) { D.audit.push({ what, by, at: new Date() }); }
+// Times are kept as real instants (timestamptz in the database) and only shown in IST.
+const fmtIST = d => new Date(d).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }).replace(/\s?([ap])\.?m\.?/i, " $1m") + " IST";
+function logApproval(what, by) { const a = { what, by, at: new Date() }; D.audit.push(a); return a; }
+function ink(card, by, at) {
+  if (!card || !card.classList.contains("draft")) return;
+  card.classList.remove("draft"); card.classList.add("inked");
+  card.querySelectorAll(".pill").forEach(p => { if (!p.closest(".c")) p.remove(); });
+  card.querySelector("h4")?.insertAdjacentHTML("beforeend", `<span class="inklabel">Approved by ${esc(by)} · ${fmtIST(at)}</span>`);
+  card.querySelectorAll(".c > .row:last-child button").forEach(b => b.disabled = true);
+}
 function approve(btn, what, after) {
   btn.closest(".card")?.querySelectorAll("button").forEach(x => x.disabled = true);
-  if (mode === "solo") { logApproval(what, first()); after(); paint(); return; }
-  const item = { id: id(), what };
+  const src = btn.closest(".card");
+  if (mode === "solo") { const a = logApproval(what, first()); ink(src, a.by, a.at); after(); paint(); return; }
+  const item = { id: id(), what, src };
   const t = { id: item.id, key: "approval:" + item.id, title: `Approve ${what}`, ctx: "Drafted by Ritu · goes out once approved", owner: "lead", when: "Today", done: false };
   D.tasks.unshift(t);
   item.resolve = (ok, via) => {
@@ -235,7 +246,7 @@ function approve(btn, what, after) {
     D.pending = D.pending.filter(x => x !== item); closeTask(t.key);
     item.waNode?.querySelectorAll("button").forEach(x => x.disabled = true);
     item.card?.querySelectorAll("button").forEach(x => x.disabled = true);
-    if (ok) { logApproval(what, first()); say(`<span class="pill p-ok">Approved by ${esc(first())}${via ? " " + via : ""}</span>`); after(); }
+    if (ok) { const a = logApproval(what, first()); ink(item.src, a.by, a.at); ink(item.card, a.by, a.at); say(`<span class="pill p-ok">Approved by ${esc(first())} · ${fmtIST(a.at)}${via ? " " + via : ""}</span>`); after(); }
     else say(`${esc(first())} sent it back: <i>"Add the joining bonus clause."</i> I've reopened the draft.`);
     paint();
   };
@@ -247,7 +258,7 @@ function reviewPending(pid) {
   const item = D.pending.find(x => x.id === pid); if (!item) return say("That approval is already done.");
   const d = desk(`<div class="card draft"><h4><span class="kind">Approval</span>${esc(item.what)} <span class="pill p-warn">Waiting for you</span></h4><div class="c">
     <div class="why">Drafted by Ritu. Approving sends it and logs your name.</div>
-    <div class="row"><button class="btn primary" type="button" data-pa="1">Approve &amp; send</button><button class="btn" type="button" data-pa="0">Send back</button></div></div></div>`);
+    <div class="row"><button class="btn primary" type="button" data-pa="1">Approve and send</button><button class="btn" type="button" data-pa="0">Send back</button></div></div></div>`);
   item.card = d;
   d.querySelectorAll("[data-pa]").forEach(b => b.onclick = () => item.resolve(b.dataset.pa === "1", "in the app"));
 }
@@ -306,7 +317,7 @@ function reasonPicker(name) {
   desk(`<div class="card draft" data-name="${esc(name)}"><h4><span class="kind">Rejection</span>${esc(name)}</h4><div class="c">
    <label class="field" for="rr${uid}">Reason (job-relevant only)<select id="rr${uid}">${REASONS.map(r => `<option value="${r[0]}">${r[1]}</option>`).join("")}</select></label>
    <div class="why">Reasons come from a fixed list. Text about age, gender, marital status, religion, caste or pregnancy is blocked.</div>
-   <div class="row"><button class="btn primary" type="button" data-a="sendReject">Approve &amp; send</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`);
+   <div class="row"><button class="btn primary" type="button" data-a="sendReject">Approve and send</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`);
 }
 ACT.sendReject = b => {
   const card = b.closest(".card"), r = card.querySelector("select"), label = r.options[r.selectedIndex].text, name = card.dataset.name;
@@ -323,7 +334,7 @@ We are pleased to appoint you as Product Designer at Acme Fintech Pvt Ltd, effec
 CTC: ₹9,60,000 per year (breakdown in Annexure A). Probation: 6 months.
 Notice period: 30 days after confirmation …</div>
   <div class="why">Filled from the offer approved on 2 Nov. Template from the Clearstage playbook. Not legal advice.</div>
-  <div class="row"><button class="btn primary" type="button" data-a="sendLetter">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div></div></div>`));
+  <div class="row"><button class="btn primary" type="button" data-a="sendLetter">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div></div></div>`));
 }
 ACT.noop = () => say("Editing drafts isn't in this preview yet. In the full product this opens the draft for editing.");
 ACT.rejectDraft = b => { b.closest(".card").querySelectorAll("button").forEach(x => x.disabled = true); say("Draft discarded. Nothing was sent."); };
@@ -408,12 +419,12 @@ function ctcBlock(comps) {
 function offer() {
   if (D.done.offerSent) return say("Kiran's offer has already gone out.");
   later(() => desk(`<div class="bubble">Kiran's offer at ₹12 L. I checked the structure before anything goes out.</div>
-  <div class="card draft"><h4><span class="kind">Offer · CTC</span>Kiran S. · Backend Developer <span class="pill p-late">Check failed</span></h4><div class="c">${ctcBlock(KIRAN)}
+  <div class="card ctc"><h4><span class="kind">Offer · CTC</span>Kiran S. · Backend Developer <span class="pill p-late">Check failed</span></h4><div class="c">${ctcBlock(KIRAN)}
   <div class="row"><button class="btn primary" type="button" data-a="fixCtc" data-once>Fix the structure for me</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
 }
 ACT.fixCtc = b => {
   const card = b.closest(".card"), c = b.closest(".c");
-  c.innerHTML = ctcBlock(fixStructure(KIRAN)) + `<div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve &amp; send offer</button></div>`;
+  c.innerHTML = ctcBlock(fixStructure(KIRAN)) + `<div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve and send offer</button></div>`;
   bind(c); card.querySelector("h4 .pill").outerHTML = '<span class="pill p-ok">Check passed</span>';
 };
 ACT.sendOffer = b => approve(b, "Kiran's offer letter", () => {
@@ -453,7 +464,7 @@ function kiranLetter() {
   <div class="doc">Dear Kiran,
 We are pleased to appoint you as Backend Developer at Acme Fintech Pvt Ltd, effective Mon 30 Nov 2026.
 CTC: ₹12,00,000 per year (breakdown in Annexure A). Probation: 6 months …</div>
-  <div class="row"><button class="btn primary" type="button" data-a="sendKiranLetter">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
+  <div class="row"><button class="btn primary" type="button" data-a="sendKiranLetter">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
 }
 ACT.sendKiranLetter = b => approve(b, "Kiran's appointment letter", () => { closeTask("kiranLetter"); person("Kiran S.").checklist[1].done = true; say("Sent to Kiran for e-acknowledgement."); });
 
@@ -482,7 +493,7 @@ function probation() {
       ["Confirm Priya", () => desk(`<div class="bubble">Vikram recommends confirming Priya. Here's the letter.</div>
        <div class="card draft"><h4><span class="kind">Approval</span>Confirmation letter · Priya Nair <span class="pill p-acc">Draft</span></h4><div class="c"><div class="doc">Dear Priya,
 We are happy to confirm your employment as Customer Success Associate with effect from 23 Nov 2026 …</div>
-       <div class="row"><button class="btn primary" type="button" data-a="sendConf">Approve &amp; send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`)],
+       <div class="row"><button class="btn primary" type="button" data-a="sendConf">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`)],
       ["Extend by 3 months", () => { pr.probation.status = "Extended"; pr.where = "Probation extended by 3 months"; closeTask("probation"); paint(); say("Vikram wants an extension. I'll draft the extension letter with his reasons and set a new review date."); }]]);
   });
 }
@@ -515,7 +526,7 @@ function renderLiveCard(c) {
   if (c.type === "brief") return `<div class="card"><h4><span class="kind">Brief · ${c.open} open</span>${c.late ? `<span class="pill p-late">${c.late} late</span>` : ""}</h4>${c.items.map(i => `<div class="item"><span class="pill ${pillCls[i.pill] || "p-mut"}">${esc(i.bucket)}</span><div class="t">${esc(i.title)}<small>${esc(i.why || "")}${i.owner ? " · Owner: " + esc(i.owner) : ""}</small></div></div>`).join("") || '<div class="item"><div class="t">All clear.</div></div>'}</div>`;
   if (c.type === "approval") return `<div class="card draft"><h4><span class="kind">Approval</span>${esc(c.title)} ${wait}</h4><div class="c"><div class="doc">${esc(c.preview)}</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
   if (c.type === "pipeline") return `<div class="card"><h4><span class="kind">Pipeline</span>${esc(c.role)} · ${c.days_open} days open</h4><div class="c"><div class="board">${c.columns.map(col => `<div class="col"><h5>${esc(col.stage)} · ${col.count}</h5>${col.people.map(n => `<span class="cand">${esc(n)}</span>`).join("")}${col.more ? `<span class="note">+${col.more} more</span>` : ""}</div>`).join("")}</div></div></div>`;
-  if (c.type === "offer") return `<div class="card draft"><h4><span class="kind">Offer · CTC</span>${c.ctc_display} <span class="pill ${c.passes ? "p-ok" : "p-late"}">${c.passes ? "Check passed" : "Check failed"}</span></h4><div class="c"><div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${c.components.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.display.slice(1))}</td></tr>`).join("")}</table></div><div class="row"><span class="pill ${c.passes ? "p-ok" : "p-late"}">Wages ${c.wages_percent}% of pay</span><span class="note">${esc(c.note)}</span></div><div class="why">${esc(c.legal)} Rule: ${esc(c.citation)}. Status: ${esc(c.status)}.</div></div></div>`;
+  if (c.type === "offer") return `<div class="card ctc"><h4><span class="kind">Offer · CTC</span>${c.ctc_display} <span class="pill ${c.passes ? "p-ok" : "p-late"}">${c.passes ? "Check passed" : "Check failed"}</span></h4><div class="c"><div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${c.components.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.display.slice(1))}</td></tr>`).join("")}</table></div><div class="row"><span class="pill ${c.passes ? "p-ok" : "p-late"}">Wages ${c.wages_percent}% of pay</span><span class="note">${esc(c.note)}</span></div><div class="why">${esc(c.legal)} Rule: ${esc(c.citation)}. Status: ${esc(c.status)}.</div></div></div>`;
   if (c.type === "scorecard") return `<div class="card"><h4><span class="kind">Scorecard</span><span class="pill p-ok">${esc(c.recommendation.replace("_", " "))}</span></h4><div class="c"><table><tr><th>Criterion</th><th>Score</th></tr>${Object.entries(c.scores).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v} / 5</td></tr>`).join("")}</table></div></div>`;
   if (c.type === "joiner_checklist") return `<div class="card"><h4><span class="kind">Joiner checklist</span>${esc(c.name)} · Day 1 ${esc(c.joined_on)}</h4>${c.tasks.map(t => `<div class="item"><span class="pill ${t.status === "done" ? "p-ok" : "p-warn"}">${t.status === "done" ? "Done" : "Open"}</span><div class="t">${esc(t.title)}<small>Owner: ${esc(t.owner || "you")}${t.due ? " · due " + esc(String(t.due).slice(0, 10)) : ""}</small></div></div>`).join("")}</div>`;
   if (c.type === "bulk_preview") return `<div class="card draft"><h4><span class="kind">Bulk preview</span>${c.count} rejection notes ${wait}</h4><div class="c"><div class="doc">${esc(c.note)}</div><div class="why">Reason: ${esc(c.reason.replace(/_/g, " "))}. Job-relevant reasons only.</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
@@ -528,7 +539,7 @@ function showLive(out) {
   d.querySelectorAll("[data-live]").forEach(b => b.onclick = async () => {
     const card = b.closest(".card"); card?.querySelectorAll("button").forEach(x => x.disabled = true);
     const req = JSON.parse(b.dataset.live);
-    try { showLive(await auth.callDesk(req)); } catch (e) { say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
+    try { const out = await auth.callDesk(req); if (req.action === "approve" && out.approved_by) ink(card, out.approved_by, out.approved_at || Date.now()); showLive(out); } catch (e) { say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
   });
   d.querySelectorAll("[data-say]").forEach(b => b.onclick = () => { me(b.dataset.say); liveTurn(b.dataset.say); });
 }
@@ -573,7 +584,7 @@ function confirmScreen() {
   if (iv.confirmed) return say("Arjun Rao has already confirmed today's screen call.");
   later(() => desk(`<div class="card draft"><h4><span class="kind">Approval</span>Message to Arjun Rao <span class="pill p-acc">Draft</span></h4><div class="c">
     <div class="doc">Hi Arjun, this is a reminder of your screen call with Acme Fintech today at 4:00 PM for the Customer Success Associate role. Reply YES to confirm, or tap the link to pick another time.</div>
-    <div class="row"><button class="btn primary" type="button" data-a="sendConfirm">Approve &amp; send</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`));
+    <div class="row"><button class="btn primary" type="button" data-a="sendConfirm">Approve and send</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`));
 }
 ACT.sendConfirm = b => approve(b, "a confirmation message to Arjun Rao", () => {
   say("Sent to Arjun Rao on WhatsApp.");
@@ -704,13 +715,21 @@ $("#view").addEventListener("keydown", e => { const r = e.target.closest("tr.cli
 /* ----- dashboards brought back from the Recruiter Desk design ----- */
 const NEXT = { "Kiran S.": ["offer", "Build Kiran's offer in Desk"], "Ankit Verma": ["chase", "Chase feedback in Desk"], "Lakshmi R.": ["chase", "Chase feedback in Desk"],
   "Sneha Rao": ["letter", "Draft Sneha's letter in Desk"], "Priya Nair": ["probation", "Start Priya's review in Desk"] };
+// "Joined" is the person's status (employee), never a pipeline stage: the database role has 4 stages, Applied → Offer.
+const JOIN_STAGES = ["Offer accepted", "Documents", "Day 1", "Probation review"];
+function tracker(names, at, label) {
+  return `<ol class="steps" style="--n:${names.length}" aria-label="${label}: ${esc(names[at])}, step ${at + 1} of ${names.length}">${names.map((s, i) =>
+    `<li class="${i < at ? "done" : i === at ? "now" : ""}"${i === at ? ' aria-current="step"' : ""}><i></i><span>${esc(s)}${i === at ? ' <b class="nowtag">Now</b>' : ""}</span></li>`).join("")}</ol>`;
+}
 function personDetail(p) {
   if (!p) { V.personId = null; return ""; }
   const stages = ["Applied", "Screened", "Interview", "Offer"], at = stages.indexOf(p.stage);
   const role = roleOf(p.role)?.title || p.roleTitle || "";
   let next = NEXT[p.name]; if (p.failed && !D.done.bulk) next = ["bulk", "Send rejection notes with Desk"];
   if (next && task(next[0])?.done) next = null;
-  const steps = p.type === "Candidate" && p.stage !== "Rejected" ? `<ol class="steps" aria-label="Hiring stage">${stages.map((s, i) => `<li class="${i <= at ? "done" : ""}${i === at ? " now" : ""}"><i></i><span>${s}</span></li>`).join("")}</ol>` : "";
+  const steps = p.type === "Candidate" && p.stage !== "Rejected" ? tracker([...stages, "Joined"], at, "Hiring stage")
+    : p.type === "Joiner" ? tracker(JOIN_STAGES, p.checklist?.every(c => c.done) ? 2 : 1, "Joining stage")
+    : p.type === "Employee" ? tracker(JOIN_STAGES, p.probation ? 3 : 2, "Joining stage") : "";
   const extra = p.checklist ? `<div class="card"><h4><span class="kind">Joiner checklist</span>Day 1: ${esc(p.day1)}</h4>${p.checklist.map(c => `<div class="item"><span class="pill ${c.done ? "p-ok" : "p-warn"}">${c.done ? "Done" : "Pending"}</span><div class="t">${esc(c.t)}</div></div>`).join("")}</div>` : "";
   const prob = p.probation ? `<div class="card"><h4><span class="kind">Probation</span></h4><div class="item"><div class="t">Ends ${esc(p.probation.ends)}<small>Manager: ${esc(p.probation.manager)}</small></div><span class="pill p-acc">${esc(p.probation.status)}</span></div></div>` : "";
   return `<button class="back" type="button" data-v="back">← All people</button>
@@ -746,7 +765,7 @@ function extraView(head) {
       <div class="cols"><div class="mainc">
         <div class="card"><h4><span class="kind">Needs you</span><a href="#today" class="link" style="font-size:13px;font-weight:500">${top.length < open.length ? `Top ${top.length} of ${open.length} · see all` : "See all"}</a></h4>
         ${top.length ? top.map(t => `<div class="item"><span class="pill ${whenPill(t.when)}">${esc(t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)}</small>${t.key === "chase" ? '<div class="suggest"><b>Desk suggests:</b> nudge Arjun on WhatsApp now and escalate to Vikram at 4 pm.</div>' : t.key === "offer" ? '<div class="suggest"><b>Desk suggests:</b> fix the salary structure before sending; it fails the 50% wages check.</div>' : ""}</div><button class="btn${t.when === "Late" ? " primary" : ""}" type="button" data-v="task" data-key="${esc(t.key)}">Do it with Desk</button></div>`).join("") : '<div class="emptyv">All clear.</div>'}</div>
-        <div class="card"><h4><span class="kind">Recent activity</span></h4>${D.audit.length ? D.audit.slice(-4).reverse().map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} at ${a.at.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</small></div></div>`).join("") : '<div class="emptyv">Nothing approved yet today. Actions you take in Desk show up here.</div>'}</div>
+        <div class="card"><h4><span class="kind">Recent activity</span></h4>${D.audit.length ? D.audit.slice(-4).reverse().map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} · ${fmtIST(a.at)}</small></div></div>`).join("") : '<div class="emptyv">Nothing approved yet today. Actions you take in Desk show up here.</div>'}</div>
       </div><div class="side">
         <div class="card"><h4><span class="kind">Coming up</span><a href="#interviews" class="link" style="font-size:13px;font-weight:500">Interviews</a></h4>${D.interviews.filter(i => i.confirmed !== undefined).map(i => `<div class="item"><div class="t">${esc(i.cand)}<small>${esc(i.when)} · ${esc(roleOf(i.role).title)}</small></div><span class="pill ${ivStatus(i)[0]}">${ivStatus(i)[1]}</span></div>`).join("")}</div>
         <div class="card"><h4><span class="kind">Pipeline</span><a href="#hiring" class="link" style="font-size:13px;font-weight:500">Jobs</a></h4><div class="bars">${["Applied", "Screened", "Interview", "Offer"].map(s => `<div><span>${s}</span><span class="b"><i style="width:${(stageTot(s) / max) * 100}%"></i></span><span>${stageTot(s)}</span></div>`).join("")}</div></div>

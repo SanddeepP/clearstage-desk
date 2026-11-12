@@ -5,16 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>Clearstage Desk</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%232F6F6A'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='17' font-weight='700' fill='white' text-anchor='middle'%3EC%3C/text%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="icon" type="image/svg+xml" href="brand/clearstage-mark-small.svg">
+<link rel="preload" href="fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
 <!-- ============ SIGN IN: email ============ -->
 <section class="auth" id="s-email" hidden>
-  <div class="logo"><div class="mark">C</div>Clearstage</div>
+  <div class="logo"><svg class="markimg" viewBox="0 0 48 48" aria-hidden="true"><rect x="0" y="34" width="14" height="14" rx="3.2"/><rect x="11.34" y="22.66" width="14" height="14" rx="3.2"/><rect x="22.66" y="11.34" width="14" height="14" rx="3.2"/><rect class="open" x="36" y="2" width="10" height="10" rx="2" stroke-width="4"/></svg><span class="wm">clearstage</span></div>
   <form class="authcard stack" id="emailForm" novalidate>
     <div><h1>Sign in or create an account</h1><p class="lead">We'll email you a 6-digit code. No password needed.</p></div>
     <label class="field" for="email">Work email
@@ -28,7 +28,7 @@
 
 <!-- ============ SIGN IN: code ============ -->
 <section class="auth" id="s-code" hidden>
-  <div class="logo"><div class="mark">C</div>Clearstage</div>
+  <div class="logo"><svg class="markimg" viewBox="0 0 48 48" aria-hidden="true"><rect x="0" y="34" width="14" height="14" rx="3.2"/><rect x="11.34" y="22.66" width="14" height="14" rx="3.2"/><rect x="22.66" y="11.34" width="14" height="14" rx="3.2"/><rect class="open" x="36" y="2" width="10" height="10" rx="2" stroke-width="4"/></svg><span class="wm">clearstage</span></div>
   <form class="authcard stack" id="codeForm" novalidate>
     <div><h1>Check your email</h1><p class="lead">Enter the 6-digit code we sent to <b id="sentTo"></b>.</p></div>
     <div class="demo" id="demoCode" hidden></div>
@@ -46,7 +46,7 @@
 
 <!-- ============ FIRST-TIME SETUP ============ -->
 <section class="auth" id="s-setup" hidden>
-  <div class="logo"><div class="mark">C</div>Clearstage</div>
+  <div class="logo"><svg class="markimg" viewBox="0 0 48 48" aria-hidden="true"><rect x="0" y="34" width="14" height="14" rx="3.2"/><rect x="11.34" y="22.66" width="14" height="14" rx="3.2"/><rect x="22.66" y="11.34" width="14" height="14" rx="3.2"/><rect class="open" x="36" y="2" width="10" height="10" rx="2" stroke-width="4"/></svg><span class="wm">clearstage</span></div>
   <form class="authcard stack" id="setupForm" novalidate>
     <div><h1>Set up your workspace</h1><p class="lead">Takes a minute. You can change these later.</p></div>
     <label class="field" for="fullName">First name<input id="fullName" autocomplete="given-name" required><span class="hint">Desk uses this to greet you.</span></label>
@@ -72,7 +72,7 @@
 <!-- ============ APP ============ -->
 <div class="app" id="s-app" hidden>
   <header class="top">
-    <div class="logo"><div class="mark">C</div>Clearstage</div>
+    <div class="logo"><svg class="markimg sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="0" y="12" width="4" height="4" rx="0.75"/><rect x="4" y="8" width="4" height="4" rx="0.75"/><rect x="8" y="4" width="4" height="4" rx="0.75"/><rect class="open" x="12.5" y="0.5" width="3" height="3" rx="0.5" stroke-width="1"/></svg><span class="wm">clearstage</span></div>
     <div class="co" id="coLine"></div>
     <div class="spacer"></div>
     <div class="who" id="who"></div>

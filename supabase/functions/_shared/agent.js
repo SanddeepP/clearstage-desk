@@ -65,7 +65,8 @@ export async function runTurn({ text, history = [], deps }) {
 export async function handleAction({ action, params = {}, rpc }) {
   if (action === "approve") {
     const r = await rpc("desk_approve", { p_subject_type: params.subject_type, p_subject_id: params.subject_id });
-    return { reply: r.approved ? `Approved by ${r.by}. ${r.approved > 1 ? r.approved + " items are" : "It's"} on the way.` : r.note, cards: [] };
+    return { reply: r.approved ? `Approved by ${r.by}. ${r.approved > 1 ? r.approved + " items are" : "It's"} on the way.` : r.note, cards: [],
+      approved_by: r.approved ? r.by : null, approved_at: r.approved_at ?? null };
   }
   if (action === "discard") { await rpc("desk_discard", { p_subject_type: params.subject_type, p_subject_id: params.subject_id }); return { reply: "Draft discarded. Nothing was sent.", cards: [] }; }
   if (action === "undo") { const r = await rpc("desk_undo", { p_event: params.event }); return { reply: `Undone. Back to ${r.stage}.`, cards: [] }; }
