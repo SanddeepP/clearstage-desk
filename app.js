@@ -505,7 +505,41 @@ function honest() {
     defaults();
   });
 }
+/* ----- live Desk agent (Supabase Edge Function), behind a switch in Settings ----- */
+const LS = { get(k) { try { return localStorage.getItem("cs:" + k); } catch { return null; } }, set(k, v) { try { localStorage.setItem("cs:" + k, v); } catch {} } };
+let liveDesk = auth.LIVE && LS.get("liveDesk") === "1", liveConv = null;
+const pillCls = { late: "p-late", warn: "p-warn", info: "p-acc", ok: "p-ok" };
+function renderLiveCard(c) {
+  const acts = (c.actions || []).map((a, i) => `<button class="btn${i === 0 ? " primary" : ""}" type="button" data-live='${esc(JSON.stringify({ action: a.action, params: a.params }))}'>${esc(a.label)}</button>`).join("");
+  const wait = c.waiting_for_other ? `<span class="pill p-warn">Waiting for ${esc(c.approver || "approval")}</span>` : "";
+  if (c.type === "brief") return `<div class="card"><h4><span class="kind">Brief · ${c.open} open</span>${c.late ? `<span class="pill p-late">${c.late} late</span>` : ""}</h4>${c.items.map(i => `<div class="item"><span class="pill ${pillCls[i.pill] || "p-mut"}">${esc(i.bucket)}</span><div class="t">${esc(i.title)}<small>${esc(i.why || "")}${i.owner ? " · Owner: " + esc(i.owner) : ""}</small></div></div>`).join("") || '<div class="item"><div class="t">All clear.</div></div>'}</div>`;
+  if (c.type === "approval") return `<div class="card draft"><h4><span class="kind">Approval</span>${esc(c.title)} ${wait}</h4><div class="c"><div class="doc">${esc(c.preview)}</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
+  if (c.type === "pipeline") return `<div class="card"><h4><span class="kind">Pipeline</span>${esc(c.role)} · ${c.days_open} days open</h4><div class="c"><div class="board">${c.columns.map(col => `<div class="col"><h5>${esc(col.stage)} · ${col.count}</h5>${col.people.map(n => `<span class="cand">${esc(n)}</span>`).join("")}${col.more ? `<span class="note">+${col.more} more</span>` : ""}</div>`).join("")}</div></div></div>`;
+  if (c.type === "offer") return `<div class="card draft"><h4><span class="kind">Offer · CTC</span>${c.ctc_display} <span class="pill ${c.passes ? "p-ok" : "p-late"}">${c.passes ? "Check passed" : "Check failed"}</span></h4><div class="c"><div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${c.components.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.display.slice(1))}</td></tr>`).join("")}</table></div><div class="row"><span class="pill ${c.passes ? "p-ok" : "p-late"}">Wages ${c.wages_percent}% of pay</span><span class="note">${esc(c.note)}</span></div><div class="why">${esc(c.legal)} Rule: ${esc(c.citation)}. Status: ${esc(c.status)}.</div></div></div>`;
+  if (c.type === "scorecard") return `<div class="card"><h4><span class="kind">Scorecard</span><span class="pill p-ok">${esc(c.recommendation.replace("_", " "))}</span></h4><div class="c"><table><tr><th>Criterion</th><th>Score</th></tr>${Object.entries(c.scores).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v} / 5</td></tr>`).join("")}</table></div></div>`;
+  if (c.type === "joiner_checklist") return `<div class="card"><h4><span class="kind">Joiner checklist</span>${esc(c.name)} · Day 1 ${esc(c.joined_on)}</h4>${c.tasks.map(t => `<div class="item"><span class="pill ${t.status === "done" ? "p-ok" : "p-warn"}">${t.status === "done" ? "Done" : "Open"}</span><div class="t">${esc(t.title)}<small>Owner: ${esc(t.owner || "you")}${t.due ? " · due " + esc(String(t.due).slice(0, 10)) : ""}</small></div></div>`).join("")}</div>`;
+  if (c.type === "bulk_preview") return `<div class="card draft"><h4><span class="kind">Bulk preview</span>${c.count} rejection notes ${wait}</h4><div class="c"><div class="doc">${esc(c.note)}</div><div class="why">Reason: ${esc(c.reason.replace(/_/g, " "))}. Job-relevant reasons only.</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
+  if (c.type === "choice") return `<div class="card"><h4><span class="kind">Which one?</span>${esc(c.question)}</h4><div class="c"><div class="row">${c.options.map(o => `<button class="btn" type="button" data-say="${esc(o.value)}">${esc(o.label)}</button>`).join("")}</div></div></div>`;
+  if (c.type === "info") return `<div class="card"><div class="c"><div>${esc(c.text)}</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
+  return "";
+}
+function showLive(out) {
+  const d = desk(`${out.reply ? `<div class="bubble">${esc(out.reply)}</div>` : ""}${(out.cards || []).map(renderLiveCard).join("")}`);
+  d.querySelectorAll("[data-live]").forEach(b => b.onclick = async () => {
+    const card = b.closest(".card"); card?.querySelectorAll("button").forEach(x => x.disabled = true);
+    const req = JSON.parse(b.dataset.live);
+    try { showLive(await auth.callDesk(req)); } catch (e) { say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
+  });
+  d.querySelectorAll("[data-say]").forEach(b => b.onclick = () => { me(b.dataset.say); liveTurn(b.dataset.say); });
+}
+async function liveTurn(t) {
+  const wait = desk('<div class="bubble"><span class="note">Desk is working on it…</span></div>');
+  try { const out = await auth.callDesk({ action: "chat", text: t, conversation_id: liveConv }); liveConv = out.conversation_id; wait.remove(); showLive(out); }
+  catch (e) { wait.remove(); say(`${esc(e.message)} You can switch the live agent off in Settings to use the preview.`); }
+}
+
 function route(t) {
+  if (liveDesk) return liveTurn(t);
   const s = t.toLowerCase();
   if (/\b(reject|nahi lena|drop)\b/.test(s) && blocked(s)) {
     say("I can't use that as a rejection reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period.");
@@ -654,6 +688,8 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "back") { V.personId = null; return renderTab(); }
   if (b.dataset.v === "ask") return withDesk(() => { me(b.dataset.text); route(b.dataset.text); });
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
+  if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; renderTab(); return; }
+  if (b.dataset.v === "loadSample") { b.disabled = true; b.textContent = "Loading…"; auth.callDesk({ action: "load_sample_data" }).then(r => { b.textContent = "Loaded"; withDesk(() => say(esc(r.reply))); }).catch(e => { b.disabled = false; b.textContent = "Load sample data"; withDesk(() => say(esc(e.message))); }); return; }
   if (b.dataset.v === "mode") return $(b.dataset.mode === "lead" ? "#m-lead" : "#m-solo").click();
   if (b.dataset.v === "role") { V.hiringRole = V.hiringRole === Number(b.dataset.rid) ? null : Number(b.dataset.rid); renderTab(); }
 });
@@ -767,6 +803,11 @@ function extraView(head) {
         <div class="setting"><div><b style="font-weight:500">First reply to applicants</b><small>Escalates to the hiring lead when missed</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Interview feedback</b><small>Reminder at 4 hours, escalation at 24 hours</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Probation review</b><small>Manager review due 15 days before the end date</small></div><span class="pill p-mut">15 days</span></div></div>
+      <div class="card"><h4><span class="kind">Live Desk agent (beta)</span><span class="pill ${liveDesk ? "p-ok" : "p-mut"}">${liveDesk ? "On" : "Off"}</span></h4>
+        <div class="setting"><div><b style="font-weight:500">Use the live agent in Ask Desk</b><small>${auth.LIVE ? "Desk answers with the real AI model and saves to your workspace in Supabase. Approvals still need your tap." : "Sign in with your email to use it."}</small></div>
+          ${auth.LIVE ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : '<span class="pill p-mut">Needs sign-in</span>'}</div>
+        <div class="setting"><div><b style="font-weight:500">Sample data in my workspace</b><small>Loads Acme-style roles, candidates, a joiner and a probation review into your own empty workspace, so the live agent has something to work on.</small></div>
+          ${auth.LIVE ? '<button class="btn" type="button" data-v="loadSample">Load sample data</button>' : '<span class="pill p-mut">Needs sign-in</span>'}</div></div>
       <div class="card"><h4><span class="kind">How Desk may act</span></h4>
         <div class="setting"><div><b style="font-weight:500">Drafts only</b><small>Nothing reaches a candidate or employee without a named approval</small></div><span class="pill p-ok">Working in preview</span></div>
         <div class="setting"><div><b style="font-weight:500">Rejection reasons</b><small>Fixed job-relevant list; age, gender, marital status, religion, caste and pregnancy are blocked</small></div><span class="pill p-ok">Working in preview</span></div>

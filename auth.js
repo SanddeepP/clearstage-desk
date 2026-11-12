@@ -60,6 +60,19 @@ export async function verifyCode(email, code) {
   return memSession;
 }
 
+/** Calls the Desk agent Edge Function as the signed-in user. Returns the parsed JSON (throws with a plain message on errors). */
+export async function callDesk(body) {
+  if (!LIVE) throw new Error("The live Desk agent needs a signed-in account.");
+  const c = await client();
+  const { data } = await c.auth.getSession();
+  if (!data.session) throw new Error("Sign in again to use the live Desk agent.");
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/desk`, { method: "POST",
+    headers: { Authorization: `Bearer ${data.session.access_token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({ error: "Desk sent an unreadable reply" }));
+  if (!r.ok || j.error) throw new Error(j.error || `Desk error ${r.status}`);
+  return j;
+}
+
 export async function currentUser() {
   if (LIVE) {
     const c = await client();
