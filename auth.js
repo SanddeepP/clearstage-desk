@@ -85,10 +85,10 @@ export async function currentUser() {
 export async function getProfile(user) {
   if (LIVE) {
     const c = await client();
-    const { data, error } = await c.from("member").select("full_name, phone, app_role, company:company_id(name, city, team_setup)").eq("user_id", user.id).maybeSingle();
+    const { data, error } = await c.from("member").select("full_name, phone, app_role, company:company_id(name, city, team_setup, desk_enabled)").eq("user_id", user.id).maybeSingle();
     if (error) throw new Error(friendly(error));
     if (!data) return null;
-    return { name: data.full_name, phone: data.phone, company: data.company.name, city: data.company.city, setup: data.company.team_setup };
+    return { name: data.full_name, phone: data.phone, company: data.company.name, city: data.company.city, setup: data.company.team_setup, deskEnabled: data.company.desk_enabled === true };
   }
   return store.get("profile:" + user.email) || (memProfile && memProfile.email === user.email ? memProfile : null);
 }

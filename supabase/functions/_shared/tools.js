@@ -104,15 +104,19 @@ export function makeExecutors({ rpc, draft }) {
     },
     async calculate_ctc(a) {
       const comps = a.fix ? fixStructure(a.components) : a.components;
-      const check = checkWagesRule(comps);          // plain code, unit-tested
-      const saved = await rpc("desk_save_offer", { p_application: a.application_id, p_components: comps, p_ctc: check.ctc,
-        p_check: { passes: check.passes, wages_percent: check.wagesPercent, deemed_extra_wages: check.deemedExtraWages, rule: WAGES_RULE.id }, p_joining: a.joining_on ?? null });
+      const mine = checkWagesRule(comps);           // plain code; only used to sanity-check the database's answer
+      const saved = await rpc("desk_save_offer", { p_application: a.application_id, p_components: comps, p_ctc: mine.ctc,
+        p_check: null, p_joining: a.joining_on ?? null });
+      // C5: the card shows the database's own check (migration 005), one source of truth.
+      const db = saved.check;
+      if (!db || db.computed_by !== "database") throw new Error("The salary check didn't come back from the database. Nothing was changed.");
+      const check = { passes: db.passes === true, wagesPercent: Number(db.wages_percent), ctc: Number(db.ctc), deemedExtraWages: Number(db.deemed_extra_wages) };
       return { result: { offer_id: saved.offer_id, passes: check.passes, wages_percent: check.wagesPercent, ctc: check.ctc, deemed_extra_wages: check.deemedExtraWages,
           instruction: check.passes ? "Offer saved as a draft. Use send_offer to ask for approval." : "Fails the 50% wages rule. Offer to fix it (calculate_ctc with fix=true)." },
         cards: [{ type: "offer", offer_id: saved.offer_id, components: comps.map(c => ({ name: c.name, amount: c.amount, display: formatINR(c.amount) })),
-          ctc: check.ctc, ctc_display: formatINR(check.ctc), passes: check.passes, wages_percent: check.wagesPercent,
+          ctc: check.ctc, ctc_display: formatINR(check.ctc), passes: check.passes, wages_percent: check.wagesPercent, computed_by: "database",
           note: check.passes ? "Meets the 50% wages rule." : `${formatINR(check.deemedExtraWages)} would count as wages for PF and gratuity.`,
-          citation: WAGES_RULE.citation, status: WAGES_RULE.status, legal: "Calculated by fixed rules, not AI. Not legal advice." }] };
+          citation: WAGES_RULE.citation, status: WAGES_RULE.status, legal: "Calculated by the database's fixed rules, not AI. Not legal advice." }] };
     },
     async send_offer({ offer_id, summary }) {
       const ap = await rpc("desk_request_approval", { p_subject_type: "offer", p_subject_id: offer_id, p_summary: summary });

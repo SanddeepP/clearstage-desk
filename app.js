@@ -542,6 +542,7 @@ function honest() {
 /* ----- live Desk agent (Supabase Edge Function), behind a switch in Settings ----- */
 const LS = { get(k) { try { return localStorage.getItem("cs:" + k); } catch { return null; } }, set(k, v) { try { localStorage.setItem("cs:" + k, v); } catch {} } };
 let liveDesk = auth.LIVE && LS.get("liveDesk") === "1", liveConv = null;
+const liveOn = () => liveDesk && profile?.deskEnabled === true;
 const pillCls = { late: "p-late", warn: "p-warn", info: "p-acc", ok: "p-ok" };
 function renderLiveCard(c) {
   const acts = (c.actions || []).map((a, i) => `<button class="btn${i === 0 ? " primary" : ""}" type="button" data-live='${esc(JSON.stringify({ action: a.action, params: a.params }))}'>${esc(a.label)}</button>`).join("");
@@ -573,7 +574,7 @@ async function liveTurn(t) {
 }
 
 function route(t) {
-  if (liveDesk) return liveTurn(t);
+  if (liveOn()) return liveTurn(t);
   const s = t.toLowerCase();
   if (/\b(reject|nahi lena|drop)\b/.test(s) && blocked(s)) {
     say("I can't use that as a rejection reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period.");
@@ -847,9 +848,9 @@ function extraView(head) {
         <div class="setting"><div><b style="font-weight:500">First reply to applicants</b><small>Escalates to the hiring lead when missed</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Interview feedback</b><small>Reminder at 4 hours, escalation at 24 hours</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Probation review</b><small>Manager review due 15 days before the end date</small></div><span class="pill p-mut">15 days</span></div></div>
-      <div class="card"><h4><span class="kind">Live Desk agent (beta)</span><span class="pill ${liveDesk ? "p-ok" : "p-mut"}">${liveDesk ? "On" : "Off"}</span></h4>
-        <div class="setting"><div><b style="font-weight:500">Use the live agent in Ask Desk</b><small>${auth.LIVE ? "Desk answers with the real AI model and saves to your workspace in Supabase. Approvals still need your tap." : "Sign in with your email to use it."}</small></div>
-          ${auth.LIVE ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : '<span class="pill p-mut">Needs sign-in</span>'}</div>
+      <div class="card"><h4><span class="kind">Live Desk agent (beta)</span><span class="pill ${liveOn() ? "p-ok" : "p-mut"}">${liveOn() ? "On" : "Off"}</span></h4>
+        <div class="setting"><div><b style="font-weight:500">Use the live agent in Ask Desk</b><small>${!auth.LIVE ? "Sign in with your email to use it." : profile?.deskEnabled ? "Desk answers with the real AI model and saves to your workspace in Supabase. Approvals still need your tap." : "Closed beta: Clearstage switches it on for your company. Until then Ask Desk uses the preview."}</small></div>
+          ${auth.LIVE && profile?.deskEnabled ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : `<span class="pill p-mut">${auth.LIVE ? "Not switched on" : "Needs sign-in"}</span>`}</div>
         <div class="setting"><div><b style="font-weight:500">Sample data in my workspace</b><small>Loads Acme-style roles, candidates, a joiner and a probation review into your own empty workspace, so the live agent has something to work on.</small></div>
           ${auth.LIVE ? '<button class="btn" type="button" data-v="loadSample">Load sample data</button>' : '<span class="pill p-mut">Needs sign-in</span>'}</div></div>
       <div class="card"><h4><span class="kind">How Desk may act</span></h4>

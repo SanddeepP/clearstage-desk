@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runTurn, handleAction } from "../supabase/functions/_shared/agent.js";
 import { TOOL_DEFS, blockedText } from "../supabase/functions/_shared/tools.js";
+import { checkWagesRule } from "../lib/ctc.js";
 
 // A scripted model: returns the queued responses in order and records what it was asked.
 function scriptedLLM(responses) {
@@ -19,14 +20,15 @@ function fakeEngine(overrides = {}) {
     desk_get_brief: { open: 3, late: 2, items: [{ task_id: "task-1", title: "Arjun Mehta hasn't given feedback", why: "26h overdue", bucket: "Late", owner: "Arjun Mehta" }] },
     desk_find_people: [{ kind: "member", id: "m1", name: "Arjun Mehta", detail: "Engineering Manager" }, { kind: "person", id: "p1", name: "Arjun Rao", detail: "Customer Success Associate · Screened" }],
     desk_create_role: { role_id: "role-9", approval: { task_id: "x", approver: "Sanddeep", self: true } },
-    desk_save_offer: { offer_id: "offer-1" },
+    // like migration 005/006: the database ignores the client's flag and returns its own check
+    desk_save_offer: args => { const c = checkWagesRule(args.p_components); return { offer_id: "offer-1", ctc: c.ctc, check: { passes: c.passes, wages_percent: c.wagesPercent, ctc: c.ctc, deemed_extra_wages: c.deemedExtraWages, computed_by: "database" } }; },
     desk_request_approval: { task_id: "y", approver: "Sanddeep", self: true },
     desk_chase_owner: { chased: "Arjun Mehta", escalates_to: "Vikram" },
     desk_month_tokens: 0,
     desk_approve: { approved: 1, by: "Sanddeep" },
     ...overrides,
   };
-  const rpc = async (name, args = {}) => { calls.push({ name, args }); if (data[name] instanceof Error) throw data[name]; if (!(name in data)) throw new Error("unexpected rpc " + name); return data[name]; };
+  const rpc = async (name, args = {}) => { calls.push({ name, args }); if (data[name] instanceof Error) throw data[name]; if (!(name in data)) throw new Error("unexpected rpc " + name); return typeof data[name] === "function" ? data[name](args) : data[name]; };
   return { rpc, calls };
 }
 const deps = (llm, rpc, extra = {}) => ({ llm, rpc, models: { route: "small-model", draft: "large-model" }, tokenCap: 1000000, monthTokens: () => rpc("desk_month_tokens"), logUsage: async () => {}, ...extra });
@@ -76,7 +78,8 @@ test("CTC is computed by code, not the model: Kiran's ₹12 L fails, fix passes"
   const second = await runTurn({ text: "Fix it", deps: deps(llm, eng.rpc) });
   assert.equal(second.cards[0].passes, true); assert.equal(second.cards[0].ctc, 1200000);
   const saved = eng.calls.filter(c => c.name === "desk_save_offer");
-  assert.equal(saved[1].args.p_check.passes, true);
+  assert.equal(saved[1].args.p_check, null, "the client sends no verdict; the database computes it");
+  assert.equal(second.cards[0].computed_by, "database");
 });
 
 test("bulk reject: protected trait in the note is refused before reaching the engine", async () => {
@@ -131,4 +134,18 @@ test("approve only happens through a person's action", async () => {
 
 test("the Edge Function's CTC module is identical to the web app's", () => {
   assert.equal(readFileSync(new URL("../supabase/functions/_shared/ctc.js", import.meta.url), "utf8"), readFileSync(new URL("../lib/ctc.js", import.meta.url), "utf8"));
+});
+
+test("C5: the salary card shows the database's check even if it disagrees with the Edge Function", async () => {
+  const comps = [{ name: "Basic + DA", kind: "basic", amount: 600000 }, { name: "Special allowance", kind: "special", amount: 600000 }];
+  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", components: comps }), say("Done.")]);
+  const eng = fakeEngine({ desk_save_offer: { offer_id: "o9", ctc: 1200000, check: { passes: false, wages_percent: 49.9, ctc: 1200000, deemed_extra_wages: 100, computed_by: "database" } } });
+  const out = await runTurn({ text: "offer", deps: deps(llm, eng.rpc) });
+  assert.equal(out.cards[0].passes, false); assert.equal(out.cards[0].wages_percent, 49.9);
+});
+
+test("C5: no database check, no card", async () => {
+  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", components: [{ name: "Basic", kind: "basic", amount: 1 }] }), say("Couldn't save.")]);
+  const out = await runTurn({ text: "offer", deps: deps(llm, fakeEngine({ desk_save_offer: { offer_id: "o9" } }).rpc) });
+  assert.equal(out.cards.length, 0);
 });

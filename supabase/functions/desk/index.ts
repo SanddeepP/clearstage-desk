@@ -78,6 +78,10 @@ Deno.serve(async (req) => {
   try {
     if (action !== "chat") return json(req, await handleAction({ action, params: body.params, rpc }));
 
+    // C2: the live agent is allow-listed per company until pilots (switched on by Clearstage, not by users).
+    const { data: allowed } = await sb.rpc("desk_live_enabled");
+    if (allowed !== true) return json(req, { error: "The live Desk agent isn't switched on for your company yet. It's in a closed beta." }, 403);
+
     const text = String(body.text ?? "").trim().slice(0, 4000);
     if (!text) return json(req, { error: "Say something to Desk" }, 400);
 
