@@ -39,3 +39,16 @@ Render every card from its fields; never from the reply text. Unknown `type` →
 - Offers that fail the 50% wages check can't be sent for approval. The check is `ctc.js`, plain code with tests.
 - Rejection reasons come from a fixed list; protected traits in the text are refused.
 - Every Desk action is in `audit_event`; token use per model call is in `ai_usage` with the tools chosen.
+
+## Screening (migration 007, function `screen-cv`)
+One CV per call: `POST /functions/v1/screen-cv {"job_id": 123}`, after `desk_enqueue_cv` stored the file in the private `cvs` bucket.
+Numbers on these cards come from the database (`score`), never from the model.
+
+| type | Fields |
+|---|---|
+| `requirements` | `requirement_id`, `version`, `must[{id,label,terms}]`, `nice[...]`, `conditions[...]`, `experience{min,max}`, `weights`, `confirmed`; action `confirm_requirements` |
+| `shortlist` | `role_id`, `stars_filter`, `rows[{application_id, name, fit, stars, years, pinned, version}]` (top 10, pinned first, ties by applied first) |
+| `why_shortlisted` | `application_id`, `score{…}`, `evidence[{item, quote, section, confidence}]`, `gaps[]`, `requirements{…}`, `note` |
+| `bulk_preview` (screening) | `preview_only: true`, `batch_id`, `count`, `people[{name, must_met, must_total, missing[]}]`, `note`, `oldest_application`, `clock`; action `approve_reject_batch_preview` (sends nothing) |
+
+Person-only actions (never model tools): `confirm_requirements`, `override_stars {application_id, stars, reason}` (reason from the fixed chip list), `pin`, `mark_contacted`.

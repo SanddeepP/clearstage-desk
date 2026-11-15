@@ -70,6 +70,12 @@ export async function handleAction({ action, params = {}, rpc }) {
   }
   if (action === "discard") { await rpc("desk_discard", { p_subject_type: params.subject_type, p_subject_id: params.subject_id }); return { reply: "Draft discarded. Nothing was sent.", cards: [] }; }
   if (action === "undo") { const r = await rpc("desk_undo", { p_event: params.event }); return { reply: `Undone. Back to ${r.stage}.`, cards: [] }; }
+  // Screening: a person's taps, never model tools (the AI never writes a score or a star).
+  if (action === "confirm_requirements") { const r = await rpc("desk_confirm_requirements", { p_requirement: params.requirement_id }); return { reply: `Requirements v${r.version} confirmed by ${r.confirmed_by}. Screening can start.`, cards: [], approved_by: r.confirmed_by, approved_at: r.confirmed_at }; }
+  if (action === "override_stars") { const r = await rpc("desk_override_stars", { p_application: params.application_id, p_stars: params.stars, p_reason: params.reason }); return { reply: `Stars changed from ${r.from} to ${r.to}. Both are kept in the log.`, cards: [] }; }
+  if (action === "pin") { const r = await rpc("desk_pin", { p_role: params.role_id, p_application: params.application_id, p_pin: params.pin !== false }); return { reply: r.pinned ? "Pinned to the top 10." : "Unpinned.", cards: [] }; }
+  if (action === "mark_contacted") { await rpc("desk_mark_contacted", { p_application: params.application_id, p_status: params.status || "contacted" }); return { reply: "Marked as contacted. The next best person moves into the top 10.", cards: [] }; }
+  if (action === "approve_reject_batch_preview") return { reply: "Approved. This is a preview: nothing was sent and no message was queued.", cards: [] };
   if (action === "load_sample_data") { await rpc("desk_load_sample_data"); return { reply: "Sample data loaded: 3 roles, 26 candidates, a joiner and a probation review.", cards: [] }; }
   throw new Error("Unknown action");
 }

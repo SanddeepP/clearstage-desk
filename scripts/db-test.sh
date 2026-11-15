@@ -15,4 +15,7 @@ $P -f supabase/migrations/001_schema.sql
 $P -f supabase/migrations/002_scheduler.sql
 $P -f supabase/seed.sql
 for f in supabase/migrations/00[3-9]_*.sql; do $P -f "$f"; $P -f "$f"; done
-for t in supabase/tests/desk_tools.sql supabase/tests/allowlist_c5.sql; do psql -v ON_ERROR_STOP=1 -q -t -A -f "$t" | tail -1; done
+for t in supabase/tests/desk_tools.sql supabase/tests/allowlist_c5.sql supabase/tests/screening.sql; do
+  last=$(psql -v ON_ERROR_STOP=1 -q -t -A -f "$t" | tail -1); echo "$last"
+  case "$last" in *PASSED*) ;; *) echo "FAILED: $t"; exit 1;; esac
+done

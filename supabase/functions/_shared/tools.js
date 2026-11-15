@@ -41,6 +41,18 @@ export const TOOL_DEFS = [
   { name: "bulk_reject", description: "Draft rejection notes for several candidates of one role with ONE job-relevant reason; they go out only after approval. Never use age, gender, marital status, religion, caste or pregnancy.", input_schema: { type: "object", properties: {
       role_id: uuid("Role id"), person_ids: { type: "array", items: { type: "string", format: "uuid" } }, reason: { type: "string", enum: REJECT_REASONS },
       note: str("Message to each candidate. Use {name} for their first name. Polite, specific to the job, no protected traits.") }, required: ["role_id", "person_ids", "reason", "note"] } },
+  // ---- Screening (PM brief 15 Nov; CTO Tech Decisions §1.3). The model never sees or writes a score, star, coverage or rank:
+  // these tools return what the database computed. Confirming requirements and overriding stars are a person's taps, not tools.
+  { name: "set_requirements", description: "Draft the requirements card for a role from its job description: 3-8 must-have skills, nice-to-haves, an experience range and job conditions (location, notice period, shift). Job-relevant only: never age, gender, college, religion, caste or marital status. Creates a draft the recruiter must confirm; screening can't start before that.", input_schema: { type: "object", properties: {
+      role_id: uuid("Role id from show_pipeline"),
+      must: { type: "array", items: { type: "object", properties: { label: str("Skill or requirement"), terms: { type: "array", items: { type: "string" }, description: "Synonyms that count" } }, required: ["label"] }, minItems: 1, maxItems: 8 },
+      nice: { type: "array", items: { type: "object", properties: { label: str("Nice-to-have"), terms: { type: "array", items: { type: "string" } } }, required: ["label"] } },
+      conditions: { type: "array", items: { type: "object", properties: { label: str("Job condition"), terms: { type: "array", items: { type: "string" } } }, required: ["label"] } },
+      exp_min: { type: "number" }, exp_max: { type: "number" } }, required: ["role_id", "must", "exp_min", "exp_max"] } },
+  { name: "get_shortlist", description: "The live top 10 to call for a role (ranked by the database's fit score; pinned people first). Optional star filter, e.g. [4,5].", input_schema: { type: "object", properties: {
+      role_id: uuid("Role id"), stars: { type: "array", items: { type: "integer", minimum: 1, maximum: 5 } } }, required: ["role_id"] } },
+  { name: "explain_fit", description: "Why a candidate was shortlisted: the stored score breakdown, CV quotes for each matched must-have, gaps, and the requirements version. Use for 'why is X in the top 10'.", input_schema: { type: "object", properties: { application_id: uuid("Application id") }, required: ["application_id"] } },
+  { name: "prepare_reject_batch", description: "Preview the rejection batch for a role: candidates below 50% of must-haves (referrals, people added by hand and unreadable CVs are never included), with the missing skills and one draft note. Preview only: nothing is sent or queued; a person approves the batch.", input_schema: { type: "object", properties: { role_id: uuid("Role id") }, required: ["role_id"] } },
 ];
 
 const L = 100000; // rupees in a lakh
@@ -138,6 +150,39 @@ export function makeExecutors({ rpc, draft }) {
     async start_probation_review({ person_id }) {
       const r = await rpc("desk_start_probation_review", { p_person: person_id });
       return { result: r, cards: [] };
+    },
+    async set_requirements(a) {
+      const lists = [a.must, a.nice || [], a.conditions || []].map(l => l.map(x => x.label)).flat().join(" ");
+      const bad = blockedText(lists); if (bad) throw new Error(`Requirements must be job-relevant; "${bad}" can't be used`);
+      const ids = (arr, p) => (arr || []).map((x, i) => ({ id: p + (i + 1), label: x.label, terms: x.terms || [] }));
+      const card = { must: ids(a.must, "m"), nice: ids(a.nice, "n"), conditions: ids(a.conditions, "c") };
+      const r = await rpc("desk_draft_requirements", { p_role: a.role_id, p_must: card.must, p_nice: card.nice, p_conditions: card.conditions, p_exp_min: a.exp_min, p_exp_max: a.exp_max });
+      return { result: { requirement_id: r.requirement_id, version: r.version, status: "draft: waiting for the recruiter to confirm" },
+        cards: [{ type: "requirements", requirement_id: r.requirement_id, version: r.version, ...card, experience: { min: a.exp_min, max: a.exp_max },
+          weights: { must: 60, experience: 20, nice: 15, conditions: 5 }, confirmed: false,
+          actions: [{ label: "Confirm requirements", action: "confirm_requirements", params: { requirement_id: r.requirement_id } }] }] };
+    },
+    async get_shortlist(a) {
+      const rows = await rpc("desk_get_shortlist", { p_role: a.role_id, p_stars: a.stars?.length ? a.stars : null, p_limit: 10 });
+      // the model gets names and order only; the numbers go straight to the card from the database
+      return { result: { count: rows.length, names_in_order: rows.map(r => r.name) },
+        cards: [{ type: "shortlist", role_id: a.role_id, stars_filter: a.stars || null, rows: rows.map(r => ({ application_id: r.application_id, name: r.name, fit: r.fit, stars: r.stars, years: r.years, pinned: r.pinned, version: r.version })) }] };
+    },
+    async explain_fit(a) {
+      const x = await rpc("desk_explain_fit", { p_application: a.application_id });
+      if (!x) throw new Error("No screening result for that application yet");
+      const has = new Set(x.evidence.filter(e => e.confidence !== "low" && e.item !== "role").map(e => e.item));
+      const gaps = x.requirements.must.filter(m => !has.has(m.id)).map(m => m.label);
+      return { result: { matched: x.requirements.must.filter(m => has.has(m.id)).map(m => m.label), gaps, version: x.requirements.version },
+        cards: [{ type: "why_shortlisted", application_id: a.application_id, score: x.score, evidence: x.evidence.filter(e => e.item !== "role"), gaps, requirements: x.requirements,
+          note: "Desk found the evidence; the score is calculated by fixed rules. A person makes every decision." }] };
+    },
+    async prepare_reject_batch(a) {
+      const b = await rpc("desk_prepare_reject_batch", { p_role: a.role_id });
+      return { result: { count: b.people.length, preview_only: true },
+        cards: [{ type: "bulk_preview", preview_only: true, batch_id: b.batch_id, count: b.people.length, reason: "skills_gap", note: b.note,
+          people: b.people, oldest_application: b.oldest_application, clock: "12 working hours (09:00-19:00 IST, Mon-Sat)",
+          actions: [{ label: "Approve and send", action: "approve_reject_batch_preview", params: { batch_id: b.batch_id, role_id: a.role_id } }] }] };
     },
     async bulk_reject(a) {
       if (!REJECT_REASONS.includes(a.reason)) return { result: { error: "Use a job-relevant reason from the list" }, cards: [] };

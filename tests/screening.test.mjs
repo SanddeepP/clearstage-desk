@@ -243,3 +243,8 @@ test("rejection clock counts working hours and pauses overnight and on Sunday", 
   assert.equal(rejectionClock(ist(16, 9), ist(16, 19)).usedHours, 10);
   assert.equal(rejectionClock(ist(16, 9), ist(16, 19)).state, "nudged");
 });
+
+test("the screen-cv worker uses exactly the same screening code as the web app", () => {
+  for (const f of ["screening", "mask", "evidence", "cvtext"])
+    assert.equal(readFileSync(new URL(`../supabase/functions/_shared/screening/${f}.js`, import.meta.url), "utf8"), readFileSync(new URL(`../lib/${f}.js`, import.meta.url), "utf8"), f);
+});
