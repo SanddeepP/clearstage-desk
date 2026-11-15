@@ -294,3 +294,34 @@ td:last-child{font-family:var(--mono);font-size:13px}
 .card h4 .kind{margin-right:0}
 .card h4 > .pill:first-of-type,.card h4 > .inklabel{margin-left:auto}
 .card.inked .c > .row:last-child{display:none}
+
+/* ---------- Screening demo (stars, requirements card, queue, shortlist, why shortlisted) ---------- */
+.stars{color:var(--teal);letter-spacing:1px;font-size:13px;white-space:nowrap}
+.stars .off{color:var(--line-strong)}
+.fig{font-family:var(--font-mono);font-weight:600;font-size:13px;color:var(--ink)}
+.mono{font-family:var(--font-mono)}
+.scrrow{gap:10px}
+.scrrow .rank{font-family:var(--font-mono);color:var(--ink-3);width:20px;flex:none;text-align:right}
+.scrrow .t{min-width:0}
+.reqgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4)}
+.reqgrid h5{font:var(--type-label);color:var(--ink-2);margin:0 0 6px}
+.reqgrid ul{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:6px}
+.reqgrid li{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.link{background:none;border:0;color:var(--teal);font:var(--type-caption);cursor:pointer;padding:0}
+.weights{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px}
+.weights .wt{display:inline-flex;gap:6px;align-items:center;color:var(--ink-2)}
+.weights input{width:58px;font-family:var(--font-mono)}
+.qbar,.clockbar{height:6px;border-radius:var(--radius-full);background:var(--surface-sunk);overflow:hidden}
+.qbar i,.clockbar i{display:block;height:100%;background:var(--teal);transition:width .15s}
+.clockbar.warn i{background:var(--clock-bar)}
+.banner{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;background:var(--clock-soft);color:var(--clock);border-radius:var(--radius-lg);padding:10px 14px;margin-bottom:var(--space-4);font-weight:500}
+.breakdown{width:100%}
+.breakdown td:first-child{color:var(--ink-2)}
+.breakdown tr.total td{font-weight:600;border-top:1px solid var(--line)}
+.evidence{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.evidence q{display:block;margin:4px 0 2px;padding-left:10px;border-left:2px solid var(--line-strong);color:var(--ink);font-style:normal}
+.evidence q::before,.evidence q::after{content:""}
+.evidence small{display:block;color:var(--ink-3)}
+.card h4 .role{display:inline-flex;gap:4px;align-items:center;margin-left:auto;flex-wrap:wrap}
+.toolbar .role{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}
+@media (max-width:760px){.reqgrid{grid-template-columns:1fr}}

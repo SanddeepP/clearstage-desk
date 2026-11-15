@@ -1,0 +1,351 @@
+// Screening demo (PM brief 15 Nov; CTO Tech Decisions §1.1–1.3). Sample data only: nothing is sent and nothing
+// is saved to Supabase. CVs go through the real pipeline in the browser — unzip (fflate), extract text (unpdf,
+// mammoth), mask — and the evidence comes from the seed cache, keyed by file hash + requirements version, exactly
+// where a cached AI result would come from. A CV that isn't in the sample set would need the live AI, which this
+// demo doesn't call. Scores, stars, coverage and the top 10 are computed by plain code (lib/screening.js).
+import { scoreCandidate, yearsFromRanges, newShortlist, offerToShortlist, leaveShortlist, pin, effectiveStars, overrideStars,
+  OVERRIDE_REASONS, HUMAN_LOOK, TOP_N, MAX_PINS, evidencedIds } from "./lib/screening.js";
+import { maskCv } from "./lib/mask.js";
+import { cvText } from "./lib/cvtext.js";
+import { sha256Hex, cacheKey } from "./lib/evidence.js";
+import { rejectionClock, fmtIST as fmtWhen } from "./lib/clock.js";
+import { REQUIREMENTS } from "./seed/screening/requirements.js";
+
+export const DEMO_DAY = new Date(Date.UTC(2026, 10, 11, 4, 30));   // Wed 11 Nov 2026, 10:00 IST (seed data's "today")
+const STARS = n => n == null ? "" : `<span class="stars" aria-label="${n} of 5 stars">${"★".repeat(n)}<span class="off">${"★".repeat(5 - n)}</span></span>`;
+
+export function createScreening(api) {
+  const { esc } = api;
+  let S;
+  const reset = () => { S = { req: {}, cands: [], lists: {}, queue: null, seed: null, libs: null, filter: [], batchDone: {}, log: [] }; };
+  reset();
+
+  /* ---------- data ---------- */
+  async function seed() {
+    if (!S.seed) S.seed = await fetch("seed/screening/seed-screening.json").then(r => r.json());
+    return S.seed;
+  }
+  async function libs() {
+    if (S.libs) return S.libs;
+    const [unpdf, fflate] = await Promise.all([import("./vendor/unpdf/index.mjs"), import("./vendor/fflate.js")]);
+    if (!window.mammoth) await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "vendor/mammoth.browser.min.js"; s.onload = res; s.onerror = () => rej(new Error("Couldn't load the DOCX reader")); document.head.append(s); });
+    return (S.libs = { unpdf, mammoth: window.mammoth, fflate });
+  }
+  const roleId = title => api.D().roles.find(r => r.title === title)?.id;
+  const titleOf = rid => api.D().roles.find(r => r.id === rid)?.title;
+  const reqOf = title => S.req[title];
+  const candsFor = title => S.cands.filter(c => c.role === title);
+  const list = title => (S.lists[title] ??= newShortlist());
+  const roleTitleFromText = t => /\b(ops|operations)\b/i.test(t) ? "Operations Analyst" : "Backend Developer";
+
+  /* ---------- SCR-1: requirements card (pencil until a named person confirms) ---------- */
+  function draftReq(title) {
+    if (!S.req[title]) { const base = REQUIREMENTS[title]; S.req[title] = JSON.parse(JSON.stringify({ ...base, confirmed: false, version: 1, edited: false })); }
+    return S.req[title];
+  }
+  function reqCard(title) {
+    const r = draftReq(title);
+    const items = (kind, arr) => arr.map(x => `<li><span>${esc(x.label)}</span>${r.confirmed ? "" : `<button class="link" type="button" data-s="rmreq" data-role="${esc(title)}" data-kind="${kind}" data-id="${x.id}" aria-label="Remove ${esc(x.label)}">Remove</button>`}</li>`).join("");
+    const w = r.weights;
+    const weights = r.confirmed ? `${w.must} / ${w.experience} / ${w.nice} / ${w.conditions}`
+      : ["must", "experience", "nice", "conditions"].map(k => `<label class="wt">${{ must: "Must-haves", experience: "Experience", nice: "Nice-to-haves", conditions: "Conditions" }[k]}<input type="number" min="0" max="100" step="5" value="${w[k]}" data-s="weight" data-role="${esc(title)}" data-k="${k}"></label>`).join("");
+    return `<div class="card ${r.confirmed ? "inked" : "draft"} reqcard" data-reqcard="${esc(title)}"><h4><span class="kind">Requirements</span>${esc(title)} · v${r.version}${r.confirmed ? `<span class="inklabel">Confirmed by ${esc(r.confirmedBy)} · ${api.fmtIST(r.confirmedAt)}</span>` : ` <span class="pill p-warn">Confirm before screening</span>`}</h4><div class="c">
+      <div class="why">${esc(r.drafted_from)}. Desk drafted this card; nothing is screened until you confirm it.</div>
+      <div class="reqgrid"><div><h5>Must-haves · ${r.must.length}</h5><ul>${items("must", r.must)}</ul></div>
+        <div><h5>Nice-to-haves · ${r.nice.length}</h5><ul>${items("nice", r.nice)}</ul></div>
+        <div><h5>Experience</h5><ul><li>${r.experience.min}–${r.experience.max} years</li></ul><h5>Job conditions</h5><ul>${items("conditions", r.conditions)}</ul></div></div>
+      <div class="weights"><b>Fit score weights</b> ${weights} <span class="note" data-wsum>${r.confirmed ? "" : "Must add up to 100."}</span></div>
+      ${r.must.length < 3 ? '<div class="note">Fewer than 3 must-haves: the under-50% rejection rule won\'t apply to this role.</div>' : ""}
+      ${r.confirmed ? "" : `<div class="row"><button class="btn primary" type="button" data-s="confirm" data-role="${esc(title)}">Confirm requirements</button><span class="note">Stars and the top 10 are calculated by fixed rules from this card. The AI only finds quotes.</span></div>`}
+    </div></div>`;
+  }
+  function confirmReq(title, card) {
+    const r = draftReq(title), w = r.weights;
+    if (w.must + w.experience + w.nice + w.conditions !== 100) { api.say("The weights must add up to 100 before you confirm."); return; }
+    if (r.must.length < 1) { api.say("Keep at least one must-have."); return; }
+    if (r.edited) r.version = 2;
+    Object.assign(r, { confirmed: true, confirmedBy: api.first(), confirmedAt: new Date() });
+    api.logApproval(`Requirements for ${title} (v${r.version})`, api.first());
+    card.outerHTML = reqCard(title);
+    api.say(`Confirmed. ${title} will be screened against v${r.version}. Upload the CVs (PDF, DOCX or a ZIP), or use the sample ZIP.`);
+    uploadPrompt(title);
+  }
+  function uploadPrompt(title) {
+    api.chips([[`Use the sample ZIP (${title === "Backend Developer" ? 30 : 10} CVs)`, () => sampleZip(title)], ["Upload CVs from my computer", () => pickFiles(title)]]);
+  }
+
+  /* ---------- JB-2: upload → one job per CV ---------- */
+  function pickFiles(title) {
+    const inp = document.createElement("input"); inp.type = "file"; inp.multiple = true; inp.accept = ".zip,.pdf,.docx";
+    inp.onchange = () => inp.files.length && upload([...inp.files], title); inp.click();
+  }
+  async function sampleZip(title) {
+    const name = title === "Backend Developer" ? "backend-developer-cvs.zip" : "operations-analyst-cvs.zip";
+    api.me(`Upload ${name}`);
+    const buf = new Uint8Array(await fetch("seed/screening/" + name).then(r => r.arrayBuffer()));
+    return run([{ name, bytes: buf }], title);
+  }
+  async function upload(files, title) {
+    api.me(`Upload ${files.length === 1 ? files[0].name : files.length + " files"}`);
+    return run(await Promise.all(files.map(async f => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }))), title);
+  }
+  async function run(inputs, title) {
+    title ??= "Backend Developer";
+    const r = reqOf(title);
+    if (!r?.confirmed) { api.say(`First, confirm the requirements for ${esc(title)}. Nothing is screened before that.`); api.desk(reqCard(title)); return; }
+    const L = await libs();
+    // Expand ZIPs (fflate). Each CV becomes its own job in the queue, never the whole ZIP in one go.
+    const jobs = [];
+    for (const f of inputs) {
+      if (/\.zip$/i.test(f.name)) {
+        const files = L.fflate.unzipSync(f.bytes);
+        for (const [n, b] of Object.entries(files)) if (!n.endsWith("/") && !n.startsWith("__MACOSX")) jobs.push({ name: n.split("/").pop(), bytes: b });
+      } else jobs.push(f);
+    }
+    if (!jobs.length) return api.say("I couldn't find any CVs in that upload.");
+    const card = api.desk(`<div class="card"><h4><span class="kind">Screening queue</span>${esc(title)} · ${jobs.length} CV${jobs.length > 1 ? "s" : ""}</h4><div class="c">
+      <div class="qbar" role="progressbar" aria-label="CVs screened" aria-valuemin="0" aria-valuemax="${jobs.length}" aria-valuenow="0"><i style="width:0%"></i></div>
+      <div class="note" data-q>Queued ${jobs.length} · one CV at a time</div>
+      <div class="why">Each CV is read (PDF or DOCX), personal details are removed, then evidence is matched. Demo: evidence comes from the cache for the 40 sample CVs, so no AI call is made and nothing leaves this browser.</div></div></div>`);
+    const t0 = performance.now(); const done = { scored: 0, human: 0, needsAi: 0, dup: 0 };
+    const sd = await seed();
+    for (let i = 0; i < jobs.length; i++) {
+      const j = jobs[i];
+      const out = await screenFile(j, title, r, sd, L);
+      done[out]++;
+      card.querySelector(".qbar i").style.width = `${((i + 1) / jobs.length) * 100}%`;
+      card.querySelector(".qbar").setAttribute("aria-valuenow", i + 1);
+      card.querySelector("[data-q]").textContent = `Screened ${i + 1} of ${jobs.length} · ${done.scored} scored · ${done.human} need a human look${done.needsAi ? ` · ${done.needsAi} need the live AI` : ""}${done.dup ? ` · ${done.dup} already screened` : ""}`;
+      api.paint(); if (["hiring", "people", "overview"].includes(api.tab())) api.renderTab();
+      await new Promise(res => setTimeout(res, 60));
+    }
+    const secs = Math.max(1, Math.round((performance.now() - t0) / 1000));
+    card.querySelector("[data-q]").textContent = `Done in ${secs} s · ${done.scored} scored · ${done.human} need a human look${done.needsAi ? ` · ${done.needsAi} need the live AI` : ""}${done.dup ? ` · ${done.dup} already screened` : ""}`;
+    refreshTasks(title);
+    shortlistCard(title);
+    const b = batch(title);
+    if (b.length) api.chips([[`Review the rejection batch (${b.length} below 50%)`, () => batchCard(title)], ["Show 4 and 5 stars", () => filterCard(title, [4, 5])]]);
+  }
+
+  async function screenFile(j, title, r, sd, L) {
+    const sha = await sha256Hex(j.bytes);
+    if (S.cands.some(c => c.sha === sha && c.role === title)) return "dup";
+    const hit = sd.cvs.find(c => c.sha256 === sha);
+    const appliedAt = new Date(DEMO_DAY.getTime() - (60 - S.cands.length) * 60e3);   // upload order = application order
+    const name = hit?.name || j.name.replace(/\.[^.]+$/, "").replace(/^\d+-/, "").replace(/[-_]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    // Real extraction and masking in the browser, the same code the server runs.
+    const t = await cvText(j.bytes, j.name, { unpdf: L.unpdf, mammoth: L.mammoth });
+    const c = { id: "scr-" + sha.slice(0, 10), sha, file: j.name, name, role: title, appliedAt, status: "new", source: hit?.source || "Upload",
+      referred: hit?.referred || null, version: r.version, scoredAt: new Date(), readable: t.readable, reason: t.reason || null };
+    if (t.readable) c.maskedPreview = maskCv(t.text, [name]).text.slice(0, 600);
+    let result;
+    if (!t.readable) { c.score = scoreCandidate(r, { readable: false }); c.label = HUMAN_LOOK; result = "human"; }
+    else if (!hit || hit.role !== title) { c.score = null; c.label = hit ? `CV is for ${hit.role}` : "needs the live AI"; result = "needsAi"; }
+    else {
+      // Cache: evidence from the sample set (requirements v1). An edited card keeps the evidence for unchanged requirements;
+      // anything added after v1 has no cached evidence and counts as missing until the live AI reads it.
+      c.cacheKey = cacheKey(sha, { ...r, version: 1 });
+      const ids = new Set([...r.must, ...r.nice, ...r.conditions].map(x => x.id));
+      c.evidence = hit.evidence.filter(e => ids.has(e.requirement_id));
+      c.roles = hit.roles;
+      c.years = yearsFromRanges(c.roles.map(x => x.quote).join("\n"), DEMO_DAY);
+      c.score = scoreCandidate(r, { readable: true, evidence: c.evidence, years: c.years, referred: !!c.referred });
+      result = "scored";
+    }
+    S.cands.push(c);
+    // The candidate appears in the pipeline (Applied) like any other.
+    const D = api.D(), rid = roleId(title);
+    D.people.push({ id: c.id, name: c.name, type: "Candidate", role: rid, stage: "Applied", owner: "hr", screen: c,
+      where: !c.score ? (c.label === HUMAN_LOOK ? "CV unreadable · needs a human look" : `Not scored · ${c.label}`) : c.score.under50 ? `${c.score.coveragePct}% of must-haves · rejection batch` : `Fit ${c.score.fit} · ${c.score.stars}★` });
+    if (c.score?.fit != null) offerToShortlist(list(title), { ...c, applied_at: +c.appliedAt }, toLists(title), new Date());
+    return result;
+  }
+  const toLists = title => candsFor(title).filter(c => c.score).map(c => ({ ...c, applied_at: +c.appliedAt }));
+
+  function refreshTasks(title) {
+    const D = api.D();
+    const b = batch(title), human = candsFor(title).filter(c => c.label === HUMAN_LOOK);
+    const key = "scrBatch:" + title;
+    D.tasks = D.tasks.filter(t => !(t.key === key || t.key === "scrHuman:" + title) || t.done);
+    if (b.length && !S.batchDone[title]) {
+      const clk = rejectionClock(Math.min(...b.map(c => +c.appliedAt)), Date.now());
+      D.tasks.push({ id: api.id(), key, title: `Review the rejection batch for ${title}`, ctx: `${b.length} below 50% of must-haves · review by ${fmtWhen(clk.offeredAt)} · nudge at 10 working hours, escalates at 11`, owner: "hr", when: "Today", done: false });
+    }
+    if (human.length) D.tasks.push({ id: api.id(), key: "scrHuman:" + title, title: `${human.length} CV${human.length > 1 ? "s" : ""} for ${title} need a human look`, ctx: "Scanned or unreadable: no AI was used and nobody was rejected", owner: "hr", when: "This week", done: false });
+    api.paint();
+  }
+
+  /* ---------- SCR-5: live top 10 ---------- */
+  function top(title) { const st = list(title); return st.ids.map(id => S.cands.find(c => c.id === id)).filter(Boolean); }
+  function reasonLine(c) {
+    const r = reqOf(c.role), has = evidencedIds(c.evidence);
+    const hits = r.must.filter(m => has.has(m.id)).map(m => m.label.split(" (")[0]);
+    const gaps = r.must.filter(m => !has.has(m.id)).map(m => m.label.split(" (")[0]);
+    return `${c.score.mustMet}/${c.score.mustTotal} must-haves${hits.length ? ": " + hits.slice(0, 2).join(", ") : ""}${gaps.length ? ` · gap: ${gaps[0]}` : ""}${c.years != null ? ` · ${c.years} yrs` : " · experience unclear"}`;
+  }
+  function rowHtml(c, i, opts = {}) {
+    const st = list(c.role), pinned = st.pins.has(c.id);
+    return `<div class="item scrrow"><span class="rank">${i + 1}</span><div class="t"><b style="font-weight:500">${esc(c.name)}</b> ${STARS(effectiveStars(c.score))} <span class="fig">${c.score.fit}</span>${c.score.override_stars ? ' <span class="pill p-mut">Override</span>' : ""}${pinned ? ' <span class="pill p-mut">Pinned</span>' : ""}${c.referred ? ' <span class="pill p-mut">Referral</span>' : ""}<small>${esc(reasonLine(c))}</small></div>
+      <button class="btn" type="button" data-s="why" data-cid="${c.id}">Why</button>${opts.actions === false ? "" : `<button class="btn" type="button" data-s="pin" data-cid="${c.id}" aria-pressed="${pinned}">${pinned ? "Unpin" : "Pin"}</button><button class="btn" type="button" data-s="contacted" data-cid="${c.id}">Contacted</button>`}</div>`;
+  }
+  function shortlistHtml(title) {
+    const t = top(title), all = candsFor(title);
+    const notes = Object.entries(list(title).notes).map(([id, n]) => ({ c: S.cands.find(x => x.id === id), n })).filter(x => x.c && x.c.status === "new");
+    return `<h4><span class="kind">Shortlist</span>Top ${TOP_N} to call · ${esc(title)} <span class="pill p-mut">${all.filter(c => c.score?.fit != null).length} scored</span></h4>
+      ${t.map((c, i) => rowHtml(c, i)).join("") || '<div class="emptyv">No one scored yet.</div>'}
+      ${notes.length ? `<div class="c"><div class="note">${notes.map(x => `${esc(x.c.name)}: ${esc(x.n)}`).join("<br>")}</div></div>` : ""}
+      <div class="c"><div class="why">Ranked by fit score; ties go to whoever applied first. A newcomer replaces #10 only if 3 or more points higher. Pinned people stay (up to ${MAX_PINS}). Desk found the evidence; the score is calculated by fixed rules. A person makes every decision.</div></div>`;
+  }
+  function shortlistCard(title) {
+    if (!candsFor(title).some(c => c.score)) return api.say(`No CVs screened for ${esc(title)} yet.`) || uploadPrompt(title);
+    const d = api.desk(`<div class="card" data-shortlist="${esc(title)}">${shortlistHtml(title)}</div>`);
+    return d;
+  }
+  function refreshShortlists() { document.querySelectorAll("[data-shortlist]").forEach(el => { el.innerHTML = shortlistHtml(el.dataset.shortlist); }); }
+
+  /* ---------- SCR-7: star filter (role board, People, Desk) ---------- */
+  function filterCard(title, stars) {
+    const hits = candsFor(title).filter(c => c.score?.stars != null && stars.includes(effectiveStars(c.score)) && c.status === "new")
+      .sort((a, b) => b.score.fit - a.score.fit || a.appliedAt - b.appliedAt);
+    api.desk(`<div class="card"><h4><span class="kind">Star filter</span>${stars.sort().join(" and ")} stars · ${esc(title)} <span class="pill p-mut">${hits.length}</span></h4>
+      ${hits.map((c, i) => rowHtml(c, i, { actions: false })).join("") || '<div class="emptyv">No one with those stars yet.</div>'}</div>`);
+  }
+
+  /* ---------- SCR-6: why shortlisted ---------- */
+  function whyPanel(p) {
+    const c = p?.screen; if (!c) return "";
+    const r = reqOf(c.role);
+    if (!c.score || c.score.fit == null) return `<div class="card"><h4><span class="kind">Screening</span>${esc(c.label || "")}</h4><div class="c"><div>${c.label === HUMAN_LOOK ? `${esc(c.reason || "No readable text.")} No AI was used, no stars were given and nobody was rejected. Open the CV and decide.` : "This CV isn't in the sample set. Live screening reads it with the AI once the agent is switched on."}</div></div></div>`;
+    const s = c.score, has = new Map(c.evidence.filter(e => ["high", "medium"].includes(e.confidence)).map(e => [e.requirement_id, e]));
+    const low = new Map(c.evidence.filter(e => e.confidence === "low").map(e => [e.requirement_id, e]));
+    const ev = r.must.map(m => has.has(m.id)
+      ? `<li><span class="pill p-ok">Has</span> <b>${esc(m.label)}</b><q>${esc(has.get(m.id).quote)}</q><small>${esc(has.get(m.id).section)} · ${esc(has.get(m.id).confidence)} confidence</small></li>`
+      : `<li><span class="pill p-late">Gap</span> <b>${esc(m.label)}</b><small>${low.has(m.id) ? "Only listed under skills (low confidence): check on the call" : "No evidence in the CV"} · ask: ${esc(askFor(m))}</small></li>`).join("");
+    const nice = r.nice.map(n => `${has.has(n.id) ? "✓" : "–"} ${esc(n.label)}`).join(" · ");
+    const cond = r.conditions.map(n => `${has.has(n.id) ? "✓" : "–"} ${esc(n.label)}`).join(" · ");
+    const ov = s.override_stars ? `<div class="note">Override: ${s.original_stars}★ → ${s.override_stars}★ by ${esc(s.override_by)} · ${esc(s.override_reason)} · ${api.fmtIST(s.override_at)}</div>` : "";
+    return `<div class="card why-card" data-why="${c.id}"><h4><span class="kind">Why shortlisted</span>${STARS(effectiveStars(s))} <span class="fig">Fit ${s.fit}</span>${s.under50 ? ' <span class="pill p-late">Rejection batch</span>' : ""}</h4><div class="c">
+      <table class="breakdown"><tr><td>Must-haves</td><td>${s.mustMet}/${s.mustTotal} (${s.coveragePct}%)</td><td>× ${r.weights.must}</td></tr>
+        <tr><td>Experience</td><td>${c.years != null ? `${c.years} years (needed ${r.experience.min}–${r.experience.max}) ${s.expInRange ? "✓" : "✗"}` : "Experience unclear"}</td><td>${s.expInRange ? r.weights.experience : 0}</td></tr>
+        <tr><td>Nice-to-haves</td><td>${s.niceMet}/${s.niceTotal}</td><td>× ${r.weights.nice}</td></tr>
+        <tr><td>Job conditions</td><td>${s.condMet}/${s.condTotal}</td><td>× ${r.weights.conditions}</td></tr>
+        <tr class="total"><td>Fit score</td><td>${s.fit} → ${s.stars}★${s.under50 ? " (below 50% of must-haves)" : ""}</td><td></td></tr></table>
+      <ul class="evidence">${ev}</ul>
+      <div class="note">Nice-to-haves: ${nice}<br>Conditions: ${cond}</div>
+      <div class="note">Scored on ${api.fmtIST(c.scoredAt)} against requirements v${c.version}. Source: ${esc(c.source)}${c.referred ? ` · referred by ${esc(c.referred)} (never auto-rejected)` : ""}. File: ${esc(c.file)}.</div>
+      ${ov}
+      <div class="why">Desk found the evidence; the score is calculated by fixed rules. A person makes every decision. Personal details (name, contact, age, gender, college and so on) were removed before any matching.</div>
+      <div class="row"><span class="note">Override stars:</span>${[1, 2, 3, 4, 5].map(n => `<button class="btn${effectiveStars(s) === n ? " primary" : ""}" type="button" data-s="ovr" data-cid="${c.id}" data-n="${n}" aria-label="${n} stars">${n}★</button>`).join("")}</div>
+      <div class="row" data-reasons="${c.id}" hidden></div>
+    </div></div>`;
+  }
+  const askFor = m => ({ m4: "message queues like Kafka or RabbitMQ", m5: "any payments or fintech work", m3: "SQL and database design", m2: "API design", m1: "the languages used day to day", o2: "how they query data", o1: "Excel lookups and pivots", o3: "reports they've built", o4: "operations processes they've run" })[m.id] || m.label.toLowerCase();
+
+  /* ---------- SCR-4 (demo): rejection batch, preview only ---------- */
+  const batch = title => candsFor(title).filter(c => c.score?.under50 && c.status === "new");
+  function batchCard(title) {
+    const b = batch(title), r = reqOf(title);
+    if (!b.length) return api.say(S.batchDone[title] ? "That batch is already approved." : `No one below 50% for ${esc(title)}.`);
+    const clk = rejectionClock(Math.min(...b.map(c => +c.appliedAt)), Date.now());
+    const missing = c => { const has = evidencedIds(c.evidence); return r.must.filter(m => !has.has(m.id)).map(m => m.label.split(" (")[0]); };
+    const exempt = candsFor(title).filter(c => c.score?.fit != null && !c.score.under50 && c.score.coverage < 0.5);
+    const human = candsFor(title).filter(c => c.label === HUMAN_LOOK);
+    const pct = Math.round(clk.fraction * 100);
+    const d = api.desk(`<div class="card draft"><h4><span class="kind">Bulk preview</span>Rejection batch · ${esc(title)} · ${b.length} people <span class="pill p-warn">Waiting for ${esc(api.first())}</span></h4><div class="c">
+      <div class="clockbar ${pct >= 75 ? "warn" : ""}"><i style="width:${Math.max(3, pct)}%"></i></div>
+      <div class="note mono">${clk.usedHours} of 12 working hours used · review by ${fmtWhen(clk.offeredAt)} · nudge at ${fmtWhen(clk.nudgeAt)} · escalates to the lead or founder at ${fmtWhen(clk.escalateAt)}</div>
+      <div class="tablewrap"><table><tr><th>Candidate</th><th>Must-haves</th><th>Missing</th></tr>${b.map(c => `<tr><td>${esc(c.name)}</td><td>${c.score.mustMet}/${c.score.mustTotal}</td><td style="text-align:left;font-family:var(--font-sans)">${esc(missing(c).join(", "))}</td></tr>`).join("")}</table></div>
+      <div class="doc">Hi {name},
+Thank you for applying for ${esc(title)} at Acme Fintech. We've decided not to move forward because your profile doesn't yet show {missing}, which this role needs.
+If you think we missed something, reply to this email and a person will look again.
+Ritu, Acme Fintech</div>
+      <div class="why">Reason from the fixed job-relevant list: required skills not shown. ${exempt.length ? `Not in this batch: ${exempt.map(c => esc(c.name) + (c.referred ? " (referral)" : "")).join(", ")}. ` : ""}${human.length ? `${human.length} unreadable CV${human.length > 1 ? "s" : ""} need a human look and are never rejected automatically.` : ""}</div>
+      <div class="row"><button class="btn primary" type="button" data-s="approveBatch" data-role="${esc(title)}">Approve and send</button><button class="btn" type="button" data-s="noop">Edit note</button></div>
+      <div class="note">Preview only: in this demo nothing is sent and no message is queued.</div></div></div>`);
+    return d;
+  }
+  function approveBatch(title, card) {
+    const b = batch(title);
+    const a = api.logApproval(`Rejection batch for ${title} (${b.length} people, preview only)`, api.first());
+    for (const c of b) {
+      c.status = "rejected";
+      const p = api.D().people.find(x => x.id === c.id); if (p) { p.stage = "Rejected"; p.where = "Closure note approved (preview, not sent)"; }
+    }
+    S.batchDone[title] = true;
+    api.D().tasks.filter(t => t.key === "scrBatch:" + title).forEach(t => { t.done = true; t.when = "Done"; });
+    api.ink(card, a.by, a.at);
+    card.querySelector(".note:last-child").textContent = "Preview only: nothing was sent and no message was queued.";
+    api.say(`Approved by ${esc(a.by)}. In the live product ${b.length} closure notes would go out now, each with its reason. This preview sent nothing.`);
+    api.paint();
+  }
+
+  /* ---------- clicks (event delegation) ---------- */
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-s]"); if (!b) return;
+    const k = b.dataset.s, c = S.cands.find(x => x.id === b.dataset.cid);
+    if (k === "rmreq") { const r = draftReq(b.dataset.role); r[b.dataset.kind] = r[b.dataset.kind].filter(x => x.id !== b.dataset.id); r.edited = true; b.closest("[data-reqcard]").outerHTML = reqCard(b.dataset.role); }
+    if (k === "confirm") confirmReq(b.dataset.role, b.closest("[data-reqcard]"));
+    if (k === "approveBatch") { b.disabled = true; approveBatch(b.dataset.role, b.closest(".card")); }
+    if (k === "noop") api.say("Editing the note isn't in this preview yet.");
+    if (k === "pin" && c) { const st = list(c.role); try { st.pins.has(c.id) ? st.pins.delete(c.id) : pin(st, c.id); S.log.push({ what: `${st.pins.has(c.id) ? "Pinned" : "Unpinned"} ${c.name}`, by: api.first(), at: new Date() }); } catch (err) { api.say(esc(err.message)); } refreshShortlists(); api.renderTab(); }
+    if (k === "contacted" && c) { c.status = "contacted"; const p = api.D().people.find(x => x.id === c.id); if (p) { p.stage = "Screened"; p.where = "Contacted · call to schedule"; }
+      leaveShortlist(list(c.role), c.id, toLists(c.role)); refreshShortlists(); api.renderTab(); api.paint(); }
+    if (k === "ovr" && c) { const box = b.closest(".c").querySelector(`[data-reasons="${c.id}"]`); box.hidden = false;
+      box.innerHTML = `<span class="note">Why ${b.dataset.n}★?</span>` + OVERRIDE_REASONS.map(r => `<button class="fchip" type="button" data-s="ovrReason" data-cid="${c.id}" data-n="${b.dataset.n}">${esc(r)}</button>`).join(""); }
+    if (k === "ovrReason" && c) {
+      c.score = overrideStars(c.score, Number(b.dataset.n), b.textContent, api.first());
+      S.log.push({ what: `Stars for ${c.name}: ${c.score.original_stars}★ → ${c.score.override_stars}★ (${c.score.override_reason})`, by: api.first(), at: new Date() });
+      api.logApproval(`Star override for ${c.name}: ${c.score.original_stars}★ → ${c.score.override_stars}★ · ${c.score.override_reason}`, api.first());
+      const p = api.D().people.find(x => x.id === c.id); if (p) p.where = `Fit ${c.score.fit} · ${c.score.override_stars}★ (override)`;
+      api.renderTab(); refreshShortlists();
+    }
+    if (k === "why" && c) api.openPerson(c.id);
+  });
+  document.addEventListener("input", e => {
+    const i = e.target.closest('[data-s="weight"]'); if (!i) return;
+    const r = draftReq(i.dataset.role); r.weights[i.dataset.k] = Number(i.value) || 0; r.edited = true;
+    const sum = Object.values(r.weights).reduce((a, b) => a + b, 0);
+    const n = i.closest(".weights").querySelector("[data-wsum]"); n.textContent = sum === 100 ? "Adds up to 100." : `Adds up to ${sum}; must be 100.`;
+  });
+
+  /* ---------- Desk commands ---------- */
+  function route(t) {
+    const s = t.toLowerCase();
+    const title = roleTitleFromText(s);
+    if (/\b(screen|upload|bulk upload)\b.*\b(cv|cvs|resume|resumes)\b|\bscreen(ing)?\b.*\b(backend|operations|ops)\b|\brequirements card\b/.test(s)) {
+      api.later(() => { const r = draftReq(title); if (!r.confirmed) { api.say(`Here's the requirements card I drafted for ${esc(title)} from its job description. Check it, then confirm. Nothing is screened before that.`); api.desk(reqCard(title)); } else { api.say(`${esc(title)} uses requirements v${r.version}, confirmed by ${esc(r.confirmedBy)}.`); uploadPrompt(title); } });
+      return true;
+    }
+    const stars = [...s.matchAll(/\b([1-5])\s*(?:★|stars?|and|,|\s)/g)].map(m => Number(m[1]));
+    if (/\bstars?\b|★/.test(s) && stars.length) { api.later(() => filterCard(title, [...new Set(stars)])); return true; }
+    if (/\btop ?10\b|\bshortlist\b|\bwho should i call\b/.test(s)) { api.later(() => shortlistCard(title)); return true; }
+    if (/\b(reject|rejection)\b.*\b(50|batch|below)\b|\bbelow 50\b/.test(s)) { api.later(() => batchCard(title)); return true; }
+    const why = s.match(/\bwhy (?:is |was )?(.+?) (?:shortlisted|ranked|in the top|scored)/);
+    if (why) { const c = S.cands.find(x => x.name.toLowerCase().includes(why[1].trim())); if (c) { api.later(() => api.desk(whyPanel(api.D().people.find(p => p.id === c.id)))); return true; } }
+    return false;
+  }
+  function runTask(key) {
+    const [kind, title] = key.split(":");
+    if (kind === "scrBatch") return batchCard(title), true;
+    if (kind === "scrHuman") { const h = candsFor(title).filter(c => c.label === HUMAN_LOOK); api.say(`These CVs have no readable text, so no AI was used and nobody was rejected: ${h.map(c => esc(c.name)).join(", ")}. Open each CV and decide.`); return true; }
+    return false;
+  }
+
+  /* ---------- pieces for the frozen screens ---------- */
+  function roleStrip(roleIdNum) {
+    const title = titleOf(roleIdNum); if (!title) return "";
+    const r = S.req[title];
+    if (!candsFor(title).length) return `<div class="card"><h4><span class="kind">Screening</span>${esc(title)}</h4><div class="c"><div class="row"><span class="note">${r?.confirmed ? `Requirements v${r.version} confirmed. Upload CVs to fill the top 10.` : "Confirm the requirements card, then upload CVs (PDF, DOCX or ZIP). Desk fills a live top 10 with stars."}</span><button class="btn primary" type="button" data-v="ask" data-text="Screen CVs for ${esc(title)}">Screen CVs in Desk</button></div></div></div>`;
+    const b = batch(title);
+    const clk = b.length ? rejectionClock(Math.min(...b.map(c => +c.appliedAt)), Date.now()) : null;
+    return `${b.length ? `<div class="banner"><span>${b.length} below 50% of must-haves · review by ${fmtWhen(clk.offeredAt)}</span><button class="btn primary" type="button" data-v="ask" data-text="Show the rejection batch below 50% for ${esc(title)}">Review batch in Desk</button></div>` : ""}
+      <div class="card" data-shortlist="${esc(title)}">${shortlistHtml(title)}</div>`;
+  }
+  const starFilterHtml = () => `<div class="role" role="group" aria-label="Filter by stars"><span class="note">Stars</span>${[5, 4, 3, 2, 1].map(n => `<button class="fchip" type="button" data-sf="${n}" aria-pressed="${S.filter.includes(n)}">${n}★</button>`).join("")}</div>`;
+  document.addEventListener("click", e => { const b = e.target.closest("[data-sf]"); if (!b) return; const n = Number(b.dataset.sf); S.filter = S.filter.includes(n) ? S.filter.filter(x => x !== n) : [...S.filter, n]; api.renderTab(); });
+  const passesFilter = p => !S.filter.length || (p.screen?.score?.stars != null && S.filter.includes(effectiveStars(p.screen.score)));
+  const starsCell = p => p.screen ? (p.screen.score?.stars != null ? STARS(effectiveStars(p.screen.score)) : `<span class="note">${esc(p.screen.label === HUMAN_LOOK ? "Human look" : "–")}</span>`) : "";
+
+  return { reset, route, runTask, roleStrip, whyPanel, starFilterHtml, passesFilter, starsCell, hasData: () => S.cands.length > 0,
+    upload: (files, title) => upload(files, title), shortlistCard, reqCard, state: () => S };
+}

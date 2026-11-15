@@ -1,6 +1,7 @@
 import * as auth from "./auth.js";
 import { checkWagesRule, fixStructure, formatINR } from "./lib/ctc.js";
 import { parseHire, fmtBudget } from "./lib/intent.js";
+import { createScreening } from "./screening-demo.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -176,6 +177,8 @@ function openApp() {
 function init(m) {
   if (m) mode = m;
   D = seed();
+  SCR ??= createScreening({ openPerson, D: () => D, desk, say, me, chips, later, paint, renderTab, tab: () => currentTab, esc, first, fmtIST, id, logApproval, ink });
+  SCR.reset();
   inner.innerHTML = ""; ph.innerHTML = '<div class="empty">Messages Desk sends appear here.</div>';
   paint(); brief();
 }
@@ -220,8 +223,11 @@ function wa(to, text, acts) {
 }
 function reply(t) { const d = document.createElement("div"); d.className = "wam out"; d.textContent = t; ph.append(d); ph.scrollTop = ph.scrollHeight; }
 
+let SCR;   // screening demo, created once the helpers below exist
+// ids are numbers for the built-in sample people and strings for screened CVs ("scr-…")
+function openPerson(pid) { V.personId = /^\d+$/.test(String(pid)) ? Number(pid) : pid; if (currentTab !== "people") location.hash = "people"; else renderTab(); }
 function defaults() {
-  chips([["What's on today?", brief], ["Chase Arjun", () => route("Chase Arjun")], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
+  chips([["What's on today?", brief], ["Screen CVs for Backend Developer", () => route("Screen CVs for Backend Developer")], ["Chase Arjun", () => route("Chase Arjun")], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
     ["Reject candidates who failed the test", bulk], ["Start Priya's probation review", probation], ["Wrap up my day", wrap]]);
 }
 
@@ -279,6 +285,7 @@ ACT.doTask = b => runTask(b.dataset.key, true);
 function runTask(key, echo) {
   const t = task(key); if (!t) return;
   if (t.done) return say(`"${esc(t.title)}" is already done.`);
+  if (key.startsWith("scr")) { const t = task(key); if (echo && t) me(t.title); if (SCR.runTask(key)) return; }
   if (key.startsWith("approval:")) { if (echo) me(t.title); return mode === "lead" ? reviewPending(Number(key.split(":")[1])) : say("Approvals go straight out in Solo setup."); }
   const map = { chase: ["Chase Arjun Mehta", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Reject candidates who failed the test", bulk],
     laptop: ["Remind Suresh about Sneha's laptop", remindIT], kiranLetter: ["Draft Kiran's appointment letter", kiranLetter], faisalOffer: ["Review Faisal's offer letter", faisalOffer], kiranLaptop: ["Remind Suresh about Kiran's laptop", remindIT] };
@@ -575,6 +582,7 @@ async function liveTurn(t) {
 
 function route(t) {
   if (liveOn()) return liveTurn(t);
+  if (SCR.route(t)) return;
   const s = t.toLowerCase();
   if (/\b(reject|nahi lena|drop)\b/.test(s) && blocked(s)) {
     say("I can't use that as a rejection reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period.");
@@ -619,7 +627,9 @@ function openCandidateNoEcho(name) { const p = person(name); say(`<b>${esc(name)
 
 $("#ask").addEventListener("submit", e => { e.preventDefault(); const v = $("#q").value.trim(); if (!v) return; if (currentTab !== "desk") location.hash = "desk"; me(v); $("#q").value = ""; route(v); });
 $("#file").addEventListener("change", e => {
-  const f = e.target.files[0]; if (!f) return; e.target.value = "";
+  const files = [...e.target.files]; e.target.value = "";
+  if (files.some(f => /\.zip$/i.test(f.name)) || files.length > 1) { if (currentTab !== "desk") location.hash = "desk"; return SCR.upload(files, "Backend Developer"); }
+  const f = files[0]; if (!f) return;
   me(`Uploaded ${f.name}`);
   later(() => { desk(`<div class="bubble">Got <b>${esc(f.name)}</b>. Reading CVs isn't in this preview yet, so I'll add a placeholder record. Which role is it for?</div>`);
     chips(D.roles.filter(r => r.status === "Open").slice(0, 4).map(r => [r.title, () => { D.people.push({ id: id(), name: f.name.replace(/\.[^.]+$/, ""), type: "Candidate", role: r.id, stage: "Applied", where: "Uploaded CV, not yet read", owner: "hr" }); paint(); say(`Added to ${esc(r.title)} as Applied. Consent is recorded at upload.`); }])); });
@@ -681,22 +691,22 @@ function renderTab() {
       (sel ? (() => {
         const actions = sel.id === 1 && !D.done.offerSent ? `<button class="btn primary" type="button" data-v="task" data-key="offer">Build Kiran's offer in Desk</button>` + (task("chase").done ? "" : `<button class="btn" type="button" data-v="task" data-key="chase">Chase late feedback in Desk</button>`)
           : sel.id === 2 && !D.done.bulk ? `<button class="btn primary" type="button" data-v="task" data-key="bulk">Send rejection notes with Desk</button>` : "";
-        return `<div class="card"><h4><span class="kind">Board</span>${esc(sel.title)}</h4><div class="c"><div class="board">${["Applied", "Screened", "Interview", "Offer"].map(st => {
-          const ps = D.people.filter(p => p.role === sel.id && p.stage === st);
-          return `<div class="col"><h5>${st} · ${ps.length}</h5>${ps.map(p => `<button class="cand${p.late ? " hot" : ""}" type="button" data-v="person" data-pid="${p.id}">${esc(p.name)}<span class="note" style="display:block">${esc(p.where)}</span></button>`).join("") || '<span class="note">None</span>'}</div>`; }).join("")}</div>
+        return SCR.roleStrip(sel.id) + `<div class="card"><h4><span class="kind">Board</span>${esc(sel.title)}${SCR.hasData() ? SCR.starFilterHtml() : ""}</h4><div class="c"><div class="board">${["Applied", "Screened", "Interview", "Offer"].map(st => {
+          const ps = D.people.filter(p => p.role === sel.id && p.stage === st && SCR.passesFilter(p));
+          return `<div class="col"><h5>${st} · ${ps.length}</h5>${ps.map(p => `<button class="cand${p.late ? " hot" : ""}" type="button" data-v="person" data-pid="${p.id}">${esc(p.name)} ${SCR.starsCell(p)}<span class="note" style="display:block">${esc(p.where)}</span></button>`).join("") || '<span class="note">None</span>'}</div>`; }).join("")}</div>
           ${actions ? `<div class="row">${actions}</div>` : ""}</div></div>`; })() : "");
   } else if (currentTab === "people") {
     const q = V.q.trim().toLowerCase();
     const rank = p => p.late ? 0 : p.stage === "Offer" ? 1 : p.type === "Joiner" ? 2 : p.probation && p.probation.status === "Review due" ? 3 : p.failed && p.stage !== "Rejected" ? 4 : p.stage === "Interview" ? 5 : p.stage === "Rejected" ? 9 : 6;
-    const list = D.people.filter(p => (V.type === "All" || p.type === V.type) && ownerMatch(p.owner) &&
+    const list = D.people.filter(p => (V.type === "All" || p.type === V.type) && ownerMatch(p.owner) && SCR.passesFilter(p) &&
       (!q || [p.name, p.roleTitle, roleOf(p.role)?.title, p.where].join(" ").toLowerCase().includes(q)))
       .map((p, i) => [p, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
     const cc = counts();
     html = head("Candidates & people", `${plural(cc.activeCands.length, "active candidate")} · ${cc.people} people in total · needs action first`) +
       `<div class="toolbar"><label class="sr" for="pq">Search people</label><input type="search" id="pq" data-vf="q" placeholder="Search by name, role or status" value="${esc(V.q)}">
-       <label class="sr" for="ptype">Type</label><select id="ptype" data-vf="type">${["All", "Candidate", "Joiner", "Employee"].map(o => `<option${V.type === o ? " selected" : ""}>${o}</option>`).join("")}</select>${ownerFilterHtml()}</div>
-      <div class="card"><div class="tablewrap"><table><tr><th>Name</th><th>Type</th><th>Role</th><th>Where they are</th><th>Owner</th></tr>
-      ${list.map(p => `<tr class="click" data-v="person" data-pid="${p.id}" tabindex="0"><td style="font-weight:500">${esc(p.name)}</td><td>${esc(p.type)}</td><td>${esc(roleOf(p.role)?.title || p.roleTitle || "")}</td><td><span class="pill ${wherePill(p)}">${esc(p.stage && p.type === "Candidate" ? p.stage + " · " : "")}${esc(p.where)}</span></td><td style="text-align:left">${esc(ownerName(p.owner))}</td></tr>`).join("") || '<tr><td colspan="5" class="emptyv">No one matches that search.</td></tr>'}
+       <label class="sr" for="ptype">Type</label><select id="ptype" data-vf="type">${["All", "Candidate", "Joiner", "Employee"].map(o => `<option${V.type === o ? " selected" : ""}>${o}</option>`).join("")}</select>${ownerFilterHtml()}${SCR.hasData() ? SCR.starFilterHtml() : ""}</div>
+      <div class="card"><div class="tablewrap"><table><tr><th>Name</th>${SCR.hasData() ? "<th>Stars</th>" : ""}<th>Type</th><th>Role</th><th>Where they are</th><th>Owner</th></tr>
+      ${list.map(p => `<tr class="click" data-v="person" data-pid="${p.id}" tabindex="0"><td style="font-weight:500">${esc(p.name)}</td>${SCR.hasData() ? `<td style="text-align:left">${SCR.starsCell(p)}</td>` : ""}<td>${esc(p.type)}</td><td>${esc(roleOf(p.role)?.title || p.roleTitle || "")}</td><td><span class="pill ${wherePill(p)}">${esc(p.stage && p.type === "Candidate" ? p.stage + " · " : "")}${esc(p.where)}</span></td><td style="text-align:left">${esc(ownerName(p.owner))}</td></tr>`).join("") || '<tr><td colspan="5" class="emptyv">No one matches that search.</td></tr>'}
       </table></div></div><p class="note">${list.length} of ${D.people.length} people · sample data</p>`;
   } else if (currentTab === "joiners") {
     const js = D.people.filter(p => p.type === "Joiner"), ps = D.people.filter(p => p.probation);
@@ -720,7 +730,7 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.vf && b.dataset.val) { V[b.dataset.vf] = b.dataset.val; return renderTab(); }
   if (b.dataset.v === "task") return withDesk(() => runTask(b.dataset.key, true));
   if (b.dataset.v === "newRole") return withDesk(() => { me("I want to open a new role"); say("Sure. Tell me the role, city and budget, for example <i>\"Ek data analyst chahiye Bangalore mein, 8-10L\"</i>."); chips([["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")], ["Hire 2 sales execs in Pune", () => hireFrom("Hire 2 sales execs in Pune")]]); });
-  if (b.dataset.v === "person") { V.personId = Number(b.dataset.pid); if (currentTab !== "people") location.hash = "people"; else renderTab(); return; }
+  if (b.dataset.v === "person") return openPerson(b.dataset.pid);
   if (b.dataset.v === "back") { V.personId = null; return renderTab(); }
   if (b.dataset.v === "ask") return withDesk(() => { me(b.dataset.text); route(b.dataset.text); });
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
@@ -765,7 +775,7 @@ function personDetail(p) {
       ${steps}
       <div><span class="pill ${wherePill(p)}">${esc(p.where)}</span></div>
       ${p.score ? `<div class="note">Excel assessment: ${p.score}% (bar is 60%)</div>` : ""}
-    </div></div>${extra}${prob}
+    </div></div>${SCR.whyPanel(p)}${extra}${prob}
     <p class="note">This view only shows information. Changes happen in Desk, through approval.</p>`;
 }
 
