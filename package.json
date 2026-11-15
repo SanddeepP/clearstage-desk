@@ -4,5 +4,10 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.2",
+    "mammoth": "^1.8.0",
+    "unpdf": "^0.12.1"
   }
 }
