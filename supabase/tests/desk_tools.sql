@@ -23,10 +23,10 @@ select 'move', desk_move_candidate((select a.id from application a join person p
 select 'undo', desk_undo((select max(id) from audit_event where action = 'candidate_moved'))->>'stage';
 -- offer: failing check can't go for approval; passing one can
 select 'kiran draft', desk_save_offer((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Kiran S.'),
-  '[{"kind":"basic","amount":420000}]', 1200000, '{"passes":false}') ? 'offer_id';
+  '[{"name":"Basic","kind":"basic","amount":420000},{"name":"Special","kind":"special","amount":780000}]', 1200000, '{"passes":true}') ? 'offer_id';  -- client's passes=true is ignored: the database computes 35% and fails it
 do $$ begin perform desk_request_approval('offer', (select id from offer limit 1), 'Kiran''s offer'); raise exception 'SHOULD HAVE FAILED';
 exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'blocked as expected: %', sqlerrm; end $$;
-select 'kiran fixed', desk_save_offer((select application_id from offer limit 1), '[{"kind":"basic","amount":570000}]', 1200000, '{"passes":true}') ? 'offer_id';
+select 'kiran fixed', desk_save_offer((select application_id from offer limit 1), '[{"name":"Basic","kind":"basic","amount":600000},{"name":"Special","kind":"special","amount":600000}]', 1200000, null) ? 'offer_id';
 select 'offer approval', desk_request_approval('offer', (select id from offer limit 1), 'Kiran''s offer') ? 'task_id';
 -- switch to the junior: they can draft, but not approve or escalate themselves
 reset role;
