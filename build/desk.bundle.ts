@@ -230,14 +230,17 @@ function makeExecutors({ rpc, draft }) {
     },
     async calculate_ctc(a) {
       const comps = a.fix ? fixStructure(a.components) : a.components;
-      const check = checkWagesRule(comps);
+      const mine = checkWagesRule(comps);
       const saved = await rpc("desk_save_offer", {
         p_application: a.application_id,
         p_components: comps,
-        p_ctc: check.ctc,
-        p_check: { passes: check.passes, wages_percent: check.wagesPercent, deemed_extra_wages: check.deemedExtraWages, rule: WAGES_RULE.id },
+        p_ctc: mine.ctc,
+        p_check: null,
         p_joining: a.joining_on ?? null
       });
+      const db = saved.check;
+      if (!db || db.computed_by !== "database") throw new Error("The salary check didn't come back from the database. Nothing was changed.");
+      const check = { passes: db.passes === true, wagesPercent: Number(db.wages_percent), ctc: Number(db.ctc), deemedExtraWages: Number(db.deemed_extra_wages) };
       return {
         result: {
           offer_id: saved.offer_id,
@@ -255,10 +258,11 @@ function makeExecutors({ rpc, draft }) {
           ctc_display: formatINR(check.ctc),
           passes: check.passes,
           wages_percent: check.wagesPercent,
+          computed_by: "database",
           note: check.passes ? "Meets the 50% wages rule." : `${formatINR(check.deemedExtraWages)} would count as wages for PF and gratuity.`,
           citation: WAGES_RULE.citation,
           status: WAGES_RULE.status,
-          legal: "Calculated by fixed rules, not AI. Not legal advice."
+          legal: "Calculated by the database's fixed rules, not AI. Not legal advice."
         }]
       };
     },
@@ -369,7 +373,12 @@ async function runTurn({ text, history = [], deps }) {
 async function handleAction({ action, params = {}, rpc }) {
   if (action === "approve") {
     const r = await rpc("desk_approve", { p_subject_type: params.subject_type, p_subject_id: params.subject_id });
-    return { reply: r.approved ? `Approved by ${r.by}. ${r.approved > 1 ? r.approved + " items are" : "It's"} on the way.` : r.note, cards: [] };
+    return {
+      reply: r.approved ? `Approved by ${r.by}. ${r.approved > 1 ? r.approved + " items are" : "It's"} on the way.` : r.note,
+      cards: [],
+      approved_by: r.approved ? r.by : null,
+      approved_at: r.approved_at ?? null
+    };
   }
   if (action === "discard") {
     await rpc("desk_discard", { p_subject_type: params.subject_type, p_subject_id: params.subject_id });
@@ -460,6 +469,8 @@ Deno.serve(async (req) => {
   const action = body.action ?? "chat";
   try {
     if (action !== "chat") return json(req, await handleAction({ action, params: body.params, rpc }));
+    const { data: allowed } = await sb.rpc("desk_live_enabled");
+    if (allowed !== true) return json(req, { error: "The live Desk agent isn't switched on for your company yet. It's in a closed beta." }, 403);
     const text = String(body.text ?? "").trim().slice(0, 4e3);
     if (!text) return json(req, { error: "Say something to Desk" }, 400);
     let convId = body.conversation_id;
