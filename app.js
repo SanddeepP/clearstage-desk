@@ -16,11 +16,7 @@ let pendingEmail = "", user = null, profile = null, resendTimer = null;
 $("#modeNote").textContent = auth.LIVE
   ? "Can't find the email? Check Spam or Gmail's Updates tab."
   : "Demo mode: email sending isn't connected yet, so your code appears on the next screen.";
-if (auth.LIVE) {
-  document.querySelector("#emailForm .lead").textContent = auth.EMAIL_HAS_CODE ? "We'll email you a sign-in link and a 6-digit code. No password needed." : "We'll email you a sign-in link. No password needed.";
-  $("#sendBtn").textContent = auth.EMAIL_HAS_CODE ? "Email me a sign-in code" : "Email me a sign-in link";
-  auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden) return; user = u; await afterSignIn(); });
-}
+if (auth.LIVE) auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden) return; user = u; await afterSignIn(); });
 
 $("#emailForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#emailErr");
@@ -32,27 +28,22 @@ $("#emailForm").addEventListener("submit", async e => {
     const d = $("#demoCode");
     d.hidden = !r.demoCode;
     if (r.demoCode) d.innerHTML = `Demo mode: in the live version this code goes to your inbox. Your code is <b>${r.demoCode}</b>`;
-    $("#code").value = ""; err("#codeErr");
-    if (auth.LIVE) {
-      const linkOnly = !auth.EMAIL_HAS_CODE;
-      $("#s-code h1").textContent = linkOnly ? "Click the link in your email" : "Check your email";
-      $("#s-code .lead").innerHTML = linkOnly
-        ? `We sent a sign-in link to <b>${esc(pendingEmail)}</b>. Open it in this browser and Clearstage opens, signed in. You can leave this page open.`
-        : `Enter the 6-digit code we sent to <b>${esc(pendingEmail)}</b>, or click the link in the same email.`;
-      $("#codeField").hidden = linkOnly; $("#verifyBtn").hidden = linkOnly;
-    }
+    $("#code").value = ""; err("#codeErr"); $("#resentNote").hidden = true;
     show("s-code"); $("#code").focus(); startResend();
   } catch (x) { err("#emailErr", x.message); }
-  finally { busy(btn, false, auth.LIVE ? (auth.EMAIL_HAS_CODE ? "Email me a sign-in code" : "Email me a sign-in link") : "Send code"); }
+  finally { busy(btn, false, "Send code"); }
 });
 
 function startResend() {
-  const b = $("#resend"); let n = 30; b.disabled = true; b.textContent = `Resend code in ${n}s`;
+  const b = $("#resend"); let n = auth.RESEND_AFTER_S; b.disabled = true; b.textContent = `Resend code in ${n}s`;
   clearInterval(resendTimer);
   resendTimer = setInterval(() => { n--; if (n <= 0) { clearInterval(resendTimer); b.disabled = false; b.textContent = "Resend code"; } else b.textContent = `Resend code in ${n}s`; }, 1000);
 }
 $("#resend").addEventListener("click", async () => {
-  try { const r = await auth.sendCode(pendingEmail); if (r.demoCode) $("#demoCode").innerHTML = `Demo mode: your new code is <b>${r.demoCode}</b>`; err("#codeErr"); startResend(); }
+  try {
+    const r = await auth.sendCode(pendingEmail); if (r.demoCode) $("#demoCode").innerHTML = `Demo mode: your new code is <b>${r.demoCode}</b>`;
+    err("#codeErr"); $("#code").value = ""; $("#resentNote").hidden = false; startResend();
+  }
   catch (x) { err("#codeErr", x.message); }
 });
 $("#changeEmail").addEventListener("click", () => { show("s-email"); $("#email").focus(); });
@@ -72,7 +63,7 @@ $("#codeForm").addEventListener("submit", async e => {
   const btn = $("#verifyBtn"); busy(btn, true, "Checking…");
   try { user = await auth.verifyCode(pendingEmail, $("#code").value); await afterSignIn(); }
   catch (x) { err("#codeErr", x.message); }
-  finally { busy(btn, false, "Verify and continue"); }
+  finally { busy(btn, false, "Verify and sign in"); }
 });
 
 async function afterSignIn() {
