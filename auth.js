@@ -1,4 +1,4 @@
-// Sign-in with a 6-digit code sent to the user's email (founder decision 20 Nov: code only, no sign-in link).
+// Sign-in with a one-time code sent to the user's email.
 // Live mode: Supabase Auth (email OTP). Demo mode: code shown on screen, profile kept in this browser.
 import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_HAS_CODE } from "./config.js";
 export { EMAIL_HAS_CODE };
@@ -28,11 +28,7 @@ const store = {
   set(k, v) { try { localStorage.setItem("cs:" + k, JSON.stringify(v)); } catch { /* storage blocked: demo still works for this visit */ } },
   del(k) { try { localStorage.removeItem("cs:" + k); } catch {} },
 };
-let memSession = null, memProfile = null, demoCode = null, lastSentAt = 0;
-/** Code lifetime: matches Supabase Auth → Email OTP expiration (600 s). */
-export const CODE_TTL_MS = 10 * 60e3;
-/** Seconds before "Resend code" appears (Supabase keeps its own per-user cooldown too). */
-export const RESEND_AFTER_S = 60;
+let memSession = null, memProfile = null, demoCode = null;
 
 export function validEmail(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e); }
 
@@ -41,13 +37,11 @@ export async function sendCode(email) {
   if (!validEmail(email)) throw new Error("Enter a full email address, like you@gmail.com.");
   if (LIVE) {
     const c = await client();
-    const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + "/" } });
     if (error) throw new Error(friendly(error));
-    lastSentAt = Date.now();
     return { demoCode: null };
   }
   demoCode = String(Math.floor(100000 + Math.random() * 900000));
-  lastSentAt = Date.now();
   return { demoCode };
 }
 
@@ -57,11 +51,10 @@ export async function verifyCode(email, code) {
   if (LIVE) {
     const c = await client();
     const { data, error } = await c.auth.verifyOtp({ email, token: code, type: "email" });
-    if (error) throw new Error(codeError(error, lastSentAt));
+    if (error) throw new Error(friendly(error));
     return { email: data.user.email, id: data.user.id };
   }
-  if (demoCode && lastSentAt && Date.now() - lastSentAt > CODE_TTL_MS) throw new Error(CODE_EXPIRED);
-  if (code !== demoCode) throw new Error(CODE_WRONG);
+  if (code !== demoCode) throw new Error("That code doesn't match. Check it and try again, or send a new one.");
   memSession = { email, id: "demo-" + email };
   store.set("session", memSession);
   return memSession;
@@ -112,7 +105,7 @@ export async function saveProfile(user, p) {
   return memProfile;
 }
 
-/** Calls fn(user) when a sign-in completes elsewhere (e.g. a one-time admin link, or another tab). */
+/** Calls fn(user) when a sign-in completes elsewhere, e.g. the emailed link opened in another tab. */
 export async function onSignedIn(fn) {
   if (!LIVE) return;
   const c = await client();
@@ -124,21 +117,10 @@ export async function signOut() {
   memSession = null; store.del("session");
 }
 
-export const CODE_WRONG = "That code is wrong. Check the newest email from Clearstage and try again.";
-export const CODE_EXPIRED = "That code has expired. Send a new one.";
-/** Supabase returns one message ("Token has expired or is invalid") for both cases, so we tell them apart by the
- *  time since the code was sent: over 10 minutes means expired, otherwise the code was mistyped or replaced. */
-export function codeError(err, sentAt, now = Date.now()) {
-  const m = (err && err.message) || "", c = (err && err.code) || "";
-  if (/rate limit|too many/i.test(m) || c === "over_request_rate_limit") return friendly(err);
-  if (/expired|invalid/i.test(m) || c === "otp_expired") return sentAt && now - sentAt > CODE_TTL_MS ? CODE_EXPIRED : CODE_WRONG;
-  return friendly(err);
-}
-
 function friendly(err) {
   const m = (err && err.message) || "";
   if (/rate limit|too many/i.test(m)) return "Too many codes requested. Wait a minute, then try again.";
-  if (/expired|invalid/i.test(m)) return CODE_EXPIRED;
+  if (/expired|invalid/i.test(m)) return "That code is wrong or has expired. Send a new one.";
   if (/signups? not allowed|disabled/i.test(m)) return "New sign-ups are switched off for this workspace. Ask the admin to invite you.";
   if (/network|fetch/i.test(m)) return "Couldn't reach the sign-in service. Check your connection and try again.";
   return m || "Something went wrong. Try again.";
