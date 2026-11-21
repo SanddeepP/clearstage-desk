@@ -2,6 +2,7 @@ import * as auth from "./auth.js";
 import { checkWagesRule, fixStructure, formatINR } from "./lib/ctc.js";
 import { parseHire, fmtBudget } from "./lib/intent.js";
 import { createScreening } from "./screening-demo.js";
+import { demoDates } from "./lib/demodate.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -16,11 +17,7 @@ let pendingEmail = "", user = null, profile = null, resendTimer = null;
 $("#modeNote").textContent = auth.LIVE
   ? "Can't find the email? Check Spam or Gmail's Updates tab."
   : "Demo mode: email sending isn't connected yet, so your code appears on the next screen.";
-if (auth.LIVE) {
-  document.querySelector("#emailForm .lead").textContent = auth.EMAIL_HAS_CODE ? "We'll email you a sign-in link and a 6-digit code. No password needed." : "We'll email you a sign-in link. No password needed.";
-  $("#sendBtn").textContent = auth.EMAIL_HAS_CODE ? "Email me a sign-in code" : "Email me a sign-in link";
-  auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden) return; user = u; await afterSignIn(); });
-}
+if (auth.LIVE) auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden) return; user = u; await afterSignIn(); });
 
 $("#emailForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#emailErr");
@@ -32,27 +29,22 @@ $("#emailForm").addEventListener("submit", async e => {
     const d = $("#demoCode");
     d.hidden = !r.demoCode;
     if (r.demoCode) d.innerHTML = `Demo mode: in the live version this code goes to your inbox. Your code is <b>${r.demoCode}</b>`;
-    $("#code").value = ""; err("#codeErr");
-    if (auth.LIVE) {
-      const linkOnly = !auth.EMAIL_HAS_CODE;
-      $("#s-code h1").textContent = linkOnly ? "Click the link in your email" : "Check your email";
-      $("#s-code .lead").innerHTML = linkOnly
-        ? `We sent a sign-in link to <b>${esc(pendingEmail)}</b>. Open it in this browser and Clearstage opens, signed in. You can leave this page open.`
-        : `Enter the 6-digit code we sent to <b>${esc(pendingEmail)}</b>, or click the link in the same email.`;
-      $("#codeField").hidden = linkOnly; $("#verifyBtn").hidden = linkOnly;
-    }
+    $("#code").value = ""; err("#codeErr"); $("#resentNote").hidden = true;
     show("s-code"); $("#code").focus(); startResend();
   } catch (x) { err("#emailErr", x.message); }
-  finally { busy(btn, false, auth.LIVE ? (auth.EMAIL_HAS_CODE ? "Email me a sign-in code" : "Email me a sign-in link") : "Send code"); }
+  finally { busy(btn, false, "Send code"); }
 });
 
 function startResend() {
-  const b = $("#resend"); let n = 30; b.disabled = true; b.textContent = `Resend code in ${n}s`;
+  const b = $("#resend"); let n = auth.RESEND_AFTER_S; b.disabled = true; b.textContent = `Resend code in ${n}s`;
   clearInterval(resendTimer);
   resendTimer = setInterval(() => { n--; if (n <= 0) { clearInterval(resendTimer); b.disabled = false; b.textContent = "Resend code"; } else b.textContent = `Resend code in ${n}s`; }, 1000);
 }
 $("#resend").addEventListener("click", async () => {
-  try { const r = await auth.sendCode(pendingEmail); if (r.demoCode) $("#demoCode").innerHTML = `Demo mode: your new code is <b>${r.demoCode}</b>`; err("#codeErr"); startResend(); }
+  try {
+    const r = await auth.sendCode(pendingEmail); if (r.demoCode) $("#demoCode").innerHTML = `Demo mode: your new code is <b>${r.demoCode}</b>`;
+    err("#codeErr"); $("#code").value = ""; $("#resentNote").hidden = false; startResend();
+  }
   catch (x) { err("#codeErr", x.message); }
 });
 $("#changeEmail").addEventListener("click", () => { show("s-email"); $("#email").focus(); });
@@ -72,7 +64,7 @@ $("#codeForm").addEventListener("submit", async e => {
   const btn = $("#verifyBtn"); busy(btn, true, "Checking…");
   try { user = await auth.verifyCode(pendingEmail, $("#code").value); await afterSignIn(); }
   catch (x) { err("#codeErr", x.message); }
-  finally { busy(btn, false, "Verify and continue"); }
+  finally { busy(btn, false, "Verify and sign in"); }
 });
 
 async function afterSignIn() {
@@ -97,11 +89,17 @@ $("#setupForm").addEventListener("submit", async e => {
 $("#signOut").addEventListener("click", async () => { await auth.signOut(); user = null; profile = null; $("#email").value = ""; show("s-email"); });
 
 /* =================== DATA (one source for chat, Check views and strip) =================== */
-// Preview data mirrors supabase/seed.sql. Demo "today" is Wed 11 Nov 2026.
+// Preview data mirrors supabase/seed.sql. QA-017: every date and time is relative to now (set again on Restart demo).
+// R4: nothing in the preview says "sent"; replies use PREVIEW_SENT.
 
-let D, uid = 100;
+let D, uid = 100, T = demoDates();
+const PREVIEW_SENT = "In the live product this would go out now. This preview sent nothing.";
 const id = () => ++uid;
 function seed() {
+  T = demoDates();
+  T.esc = T.inHours(2);                               // escalation time, a couple of hours from now
+  T.screen = T.clock(T.at(2.5));                      // today's screen call
+  T.drafted = T.time(Date.now() - 50 * 60e3) + " IST"; // when Desk drafted Faisal's letter
   const roles = [
     { id: 1, title: "Backend Developer", city: "Hyderabad", openings: 1, days: 21, budget: "₹10–14 L", status: "Open" },
     { id: 2, title: "Operations Analyst", city: "Hyderabad", openings: 1, days: 14, budget: "₹5–7 L", status: "Open" },
@@ -113,31 +111,31 @@ function seed() {
   ["Neha J.", "Rohan M.", "Sana Q.", "Tushar A.", "Uma D."].forEach(n => cand(n, 1, "Screened", "Screen call done"));
   cand("Ankit Verma", 1, "Interview", "Feedback late (Arjun Mehta)", { late: true });
   cand("Lakshmi R.", 1, "Interview", "Feedback late (Arjun Mehta)", { late: true });
-  cand("Sameer T.", 1, "Interview", "Round 1 on Fri 13 Nov");
+  cand("Sameer T.", 1, "Interview", `Round 1 on ${T.day(2)}`);
   cand("Kiran S.", 1, "Offer", "Offer to build (₹12 L)");
   cand("Faisal Khan", 3, "Offer", "Offer letter drafted · waiting for your approval");
   [["Megha D.", 48], ["Imran S.", 52], ["Tarun B.", 41], ["Pooja N.", 55]].forEach(([n, s]) => cand(n, 2, "Screened", `Excel test ${s}% (below 60%)`, { score: s, failed: true }));
   ["Rhea K.", "Vivek J."].forEach(n => cand(n, 2, "Applied", "New application"));
   ["Nisha P.", "Omkar S.", "Prerna V."].forEach(n => cand(n, 3, "Applied", "New application"));
   cand("Arjun Rao", 3, "Screened", "Screen call done");
-  people.push({ id: id(), name: "Sneha Rao", type: "Joiner", roleTitle: "Product Designer", where: "Joins Mon 16 Nov", owner: "hr", day1: "Mon 16 Nov",
+  people.push({ id: id(), name: "Sneha Rao", type: "Joiner", roleTitle: "Product Designer", where: `Joins ${T.day(5)}`, owner: "hr", day1: T.day(5),
     checklist: [{ t: "Documents uploaded", done: true }, { t: "Appointment letter", done: false }, { t: "Laptop and email", done: false }, { t: "Day 1 plan and buddy", done: true }] });
-  people.push({ id: id(), name: "Priya Nair", type: "Employee", roleTitle: "Customer Success Associate", where: "Probation ends 23 Nov", owner: "hr",
-    probation: { ends: "Mon 23 Nov", manager: "Vikram", status: "Review due" } });
+  people.push({ id: id(), name: "Priya Nair", type: "Employee", roleTitle: "Customer Success Associate", where: `Probation ends ${T.dayShort(12)}`, owner: "hr",
+    probation: { ends: T.day(12), manager: "Vikram", status: "Review due" } });
   const tasks = [
-    { id: id(), key: "chase", title: "Arjun Mehta hasn't given feedback on 2 candidates", ctx: "Backend Developer · 26 hours overdue · escalates to Vikram at 4 pm", owner: "Arjun Mehta", when: "Late", done: false },
-    { id: id(), key: "letter", title: "Sneha joins Monday with no appointment letter", ctx: "Every joiner needs one before Day 1", owner: "hr", when: "Late", done: false },
+    { id: id(), key: "chase", title: "Arjun Mehta hasn't given feedback on 2 candidates", ctx: `Backend Developer · 26 hours overdue · escalates to Vikram at ${T.esc}`, owner: "Arjun Mehta", when: "Late", done: false },
+    { id: id(), key: "letter", title: `Sneha joins ${T.weekday(5)} with no appointment letter`, ctx: "Every joiner needs one before Day 1", owner: "hr", when: "Late", done: false },
     { id: id(), key: "offer", title: "Build Kiran's offer", ctx: "Backend Developer · ₹12 L · structure needs the 50% wages check", owner: "hr", when: "Today", done: false },
-    { id: id(), key: "faisalOffer", title: "Approve Faisal Khan's offer letter", ctx: "Customer Success Associate · ₹5.4 L · salary check passed · Desk drafted it at 5:40 pm IST", owner: "hr", when: "Today", done: false },
-    { id: id(), key: "probation", title: "Start Priya's probation review", ctx: "Probation ends Mon 23 Nov · manager review is due before then", owner: "hr", when: "This week", done: false },
+    { id: id(), key: "faisalOffer", title: "Approve Faisal Khan's offer letter", ctx: `Customer Success Associate · ₹5.4 L · salary check passed · Desk drafted it at ${T.drafted}`, owner: "hr", when: "Today", done: false },
+    { id: id(), key: "probation", title: "Start Priya's probation review", ctx: `Probation ends ${T.day(12)} · manager review is due before then`, owner: "hr", when: "This week", done: false },
     { id: id(), key: "bulk", title: "Send rejection notes to 4 Operations Analyst candidates", ctx: "Below 60% on the Excel test · job-relevant reason drafted", owner: "hr", when: "This week", done: false },
-    { id: id(), key: "laptop", title: "Laptop and email for Sneha", ctx: "Needed before Mon 16 Nov", owner: "Suresh (IT)", when: "This week", done: false },
+    { id: id(), key: "laptop", title: "Laptop and email for Sneha", ctx: `Needed before ${T.day(5)}`, owner: "Suresh (IT)", when: "This week", done: false },
   ];
   const interviews = [
     { id: id(), when: "Yesterday · 3:00 PM", cand: "Ankit Verma", role: 1, round: "Round 1", panel: "Arjun Mehta" },
     { id: id(), when: "Yesterday · 4:30 PM", cand: "Lakshmi R.", role: 1, round: "Round 1", panel: "Arjun Mehta" },
-    { id: id(), when: "Today · 4:00 PM", cand: "Arjun Rao", role: 3, round: "Screen call", panel: "Ritu", confirmed: false },
-    { id: id(), when: "Fri 13 Nov · 11:30 AM", cand: "Sameer T.", role: 1, round: "Round 1", panel: "Arjun Mehta, Vikram", confirmed: true },
+    { id: id(), when: `Today · ${T.screen}`, cand: "Arjun Rao", role: 3, round: "Screen call", panel: "Ritu", confirmed: false },
+    { id: id(), when: `${T.day(2)} · 11:30 AM`, cand: "Sameer T.", role: 1, round: "Round 1", panel: "Arjun Mehta, Vikram", confirmed: true },
   ];
   return { roles, people, tasks, interviews, pending: [], audit: [], done: {} };
 }
@@ -177,7 +175,7 @@ function openApp() {
 function init(m) {
   if (m) mode = m;
   D = seed();
-  SCR ??= createScreening({ openPerson, D: () => D, desk, say, me, chips, later, paint, renderTab, tab: () => currentTab, esc, first, fmtIST, id, logApproval, ink });
+  SCR ??= createScreening({ openPerson, offerUndo, company: () => profile?.company || "Acme Fintech", D: () => D, desk, say, me, chips, later, paint, renderTab, tab: () => currentTab, esc, first, fmtIST, id, logApproval, ink });
   SCR.reset();
   inner.innerHTML = ""; ph.innerHTML = '<div class="empty">Messages Desk sends appear here.</div>';
   paint(); brief();
@@ -205,7 +203,12 @@ const scroll = () => { log.scrollTop = log.scrollHeight; };
 let chipTimer;
 function me(t) { chipsEl.innerHTML = ""; clearTimeout(chipTimer); chipTimer = setTimeout(() => { if (!chipsEl.children.length) defaults(); }, 1500); const d = document.createElement("div"); d.className = "msg me"; d.innerHTML = `<div class="bubble">${esc(t)}</div>`; inner.append(d); scroll(); }
 const MARK_SM = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="0" y="12" width="4" height="4" rx="0.75" fill="currentColor"/><rect x="4" y="8" width="4" height="4" rx="0.75" fill="currentColor"/><rect x="8" y="4" width="4" height="4" rx="0.75" fill="currentColor"/><rect x="12.5" y="0.5" width="3" height="3" rx="0.5" fill="none" stroke="currentColor" stroke-width="1"/></svg>';
-function desk(html) { const d = document.createElement("div"); d.className = "msg"; d.innerHTML = `<div class="av" aria-hidden="true">${MARK_SM}</div><div class="mbody">${html}</div>`; inner.append(d); bind(d); scroll(); return d; }
+function desk(html) {
+  const d = document.createElement("div"); d.className = "msg"; d.innerHTML = `<div class="av" aria-hidden="true">${MARK_SM}</div><div class="mbody">${html}</div>`;
+  if (mode === "lead") d.querySelectorAll(".card.draft .row .btn.primary").forEach(b => { if (/^Approve/.test(b.textContent)) b.textContent = "Send for approval"; });   // QA-027
+  d.querySelectorAll(".card.draft > h4 .kind").forEach(k => { if (!/Desk drafted/.test(k.textContent)) k.textContent = "Desk drafted · " + k.textContent; });
+  inner.append(d); d.querySelectorAll(".card[data-subject]").forEach(c => replaceOlder(c.dataset.subject, c)); bind(d); scroll(); return d;
+}
 const later = (fn, ms = 450) => setTimeout(fn, ms);
 const say = t => desk(`<div class="bubble">${t}</div>`);
 function chips(list) { chipsEl.innerHTML = ""; list.forEach(([label, fn]) => { const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = label; b.onclick = () => { me(label); fn(); }; chipsEl.append(b); }); }
@@ -234,18 +237,66 @@ function defaults() {
 // Pencil & Ink: AI output is a draft until a named person approves it. Every approval is logged.
 // Times are kept as real instants (timestamptz in the database) and only shown in IST.
 const fmtIST = d => new Date(d).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }).replace(/\s?([ap])\.?m\.?/i, " $1m") + " IST";
-function logApproval(what, by) { const a = { what, by, at: new Date() }; D.audit.push(a); return a; }
+function logApproval(what, by) { const a = { id: id(), what, by, at: new Date(), kind: "approval" }; D.audit.push(a); return a; }
+// One label per audit event, everywhere (marks, chases, rejections and undos share the log with approvals)
+const auditKind = a => a.isUndo ? ["Undone", "p-warn"] : /^Working mark/.test(a.what) ? ["Mark", "p-mut"] : /^Rejected/.test(a.what) ? ["Rejected", "p-mut"] : /^Chased/.test(a.what) ? ["Chased", "p-acc"] : a.undone ? ["Approved, undone", "p-mut"] : ["Approved", "p-ok"];
+const approvalsOnly = () => D.audit.filter(a => a.kind === "approval" && !a.undone);
+const auditRow = a => { const [l, c] = auditKind(a); return `<div class="item"><span class="pill ${c}">${l}</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} · ${fmtIST(a.at)}</small></div>${canUndo(a) ? `<button class="btn" type="button" data-v="undo" data-aid="${a.id}">Undo</button>` : ""}</div>`; };
+// QA-019: one rule for every Desk draft. Dashed and "Desk drafted" until approved; solid with
+// "Approved by <name> · <time> IST" on the card itself once approved. A newer draft replaces older ones.
 function ink(card, by, at) {
   if (!card || !card.classList.contains("draft")) return;
   card.classList.remove("draft"); card.classList.add("inked");
   card.querySelectorAll(".pill").forEach(p => { if (!p.closest(".c")) p.remove(); });
+  const k = card.querySelector("h4 .kind"); if (k && /Desk drafted/.test(k.textContent)) k.textContent = "Approved";
   card.querySelector("h4")?.insertAdjacentHTML("beforeend", `<span class="inklabel">Approved by ${esc(by)} · ${fmtIST(at)}</span>`);
-  card.querySelectorAll(".c > .row:last-child button").forEach(b => b.disabled = true);
+  card.querySelectorAll(".c > .row button").forEach(b => b.disabled = true);
+}
+function uninked(card, by, at) {
+  if (!card) return;
+  card.classList.remove("inked"); card.classList.add("draft");
+  const k = card.querySelector("h4 .kind"); if (k && k.textContent === "Approved") k.textContent = "Desk drafted";
+  card.querySelector(".inklabel")?.remove(); card.querySelector("[data-undo]")?.remove();
+  card.querySelector("h4")?.insertAdjacentHTML("beforeend", `<span class="pill p-warn">Undone by ${esc(by)} · ${fmtIST(at)}</span>`);
+  card.querySelectorAll(".c > .row button").forEach(b => b.disabled = false);
+}
+function replaceOlder(subject, newer) {
+  document.querySelectorAll(`.card[data-subject="${subject}"]`).forEach(c => {
+    if (c === newer || newer?.contains(c)) return;
+    c.querySelectorAll(".c > .row button").forEach(b => b.disabled = true);
+    if (!c.querySelector(".replaced")) c.querySelector(".c")?.insertAdjacentHTML("beforeend", '<div class="note replaced">Replaced by a newer draft</div>');
+  });
+}
+
+/* ---------- QA-020: undo for 10 minutes after any approval ---------- */
+const UNDO_MS = 10 * 60 * 1000;
+const snapshot = () => structuredClone({ people: D.people.map(p => ({ ...p, screen: undefined })), screens: D.people.map(p => p.screen), tasks: D.tasks, roles: D.roles, interviews: D.interviews, done: D.done });
+function restore(snap) {
+  const screens = snap.screens; Object.assign(D, { people: snap.people.map((p, i) => (screens[i] ? { ...p, screen: D.people.find(x => x.id === p.id)?.screen ?? screens[i] } : p)), tasks: snap.tasks, roles: snap.roles, interviews: snap.interviews, done: snap.done });
+}
+function offerUndo(card, a, revert) {
+  a.revert = revert; a.card = card;
+  const btn = document.createElement("button"); btn.type = "button"; btn.className = "link"; btn.dataset.undo = a.id; btn.textContent = "Undo (10 min)";
+  btn.onclick = () => undoApproval(a);
+  card?.querySelector("h4")?.append(btn);
+  setTimeout(() => { btn.remove(); paint(); if (currentTab === "approvals") renderTab(); }, UNDO_MS);
+}
+function canUndo(a) { return a.revert && !a.undone && Date.now() - a.at < UNDO_MS; }
+function undoApproval(a) {
+  if (!canUndo(a)) return say("The 10 minutes to undo that approval have passed.");
+  const later = D.audit.filter(x => x.at > a.at && x.revert && !x.undone && !x.isUndo);
+  if (later.length) return say(`Undo "${esc(later[later.length - 1].what)}" first: it was approved after this one.`);
+  a.revert(); a.undone = true;
+  const u = { id: id(), what: `Undid approval of ${a.what}`, by: first(), at: new Date(), isUndo: true };
+  D.audit.push(u);
+  uninked(a.card, u.by, u.at);
+  say(`Undone and logged. ${esc(a.what)} is back to a draft. Nothing went out.`);
+  paint(); if (currentTab === "approvals") renderTab();
 }
 function approve(btn, what, after) {
   btn.closest(".card")?.querySelectorAll("button").forEach(x => x.disabled = true);
   const src = btn.closest(".card");
-  if (mode === "solo") { const a = logApproval(what, first()); ink(src, a.by, a.at); after(); paint(); return; }
+  if (mode === "solo") { const snap = snapshot(); const a = logApproval(what, first()); ink(src, a.by, a.at); after(); offerUndo(src, a, () => restore(snap)); paint(); return; }
   const item = { id: id(), what, src };
   const t = { id: item.id, key: "approval:" + item.id, title: `Approve ${what}`, ctx: "Drafted by Ritu · goes out once approved", owner: "lead", when: "Today", done: false };
   D.tasks.unshift(t);
@@ -254,7 +305,7 @@ function approve(btn, what, after) {
     D.pending = D.pending.filter(x => x !== item); closeTask(t.key);
     item.waNode?.querySelectorAll("button").forEach(x => x.disabled = true);
     item.card?.querySelectorAll("button").forEach(x => x.disabled = true);
-    if (ok) { const a = logApproval(what, first()); ink(item.src, a.by, a.at); ink(item.card, a.by, a.at); say(`<span class="pill p-ok">Approved by ${esc(first())} · ${fmtIST(a.at)}${via ? " " + via : ""}</span>`); after(); }
+    if (ok) { const snap = snapshot(); const a = logApproval(what, first()); ink(item.src, a.by, a.at); ink(item.card, a.by, a.at); say(`<span class="pill p-ok">Approved by ${esc(first())} · ${fmtIST(a.at)}${via ? " " + via : ""}</span>`); after(); offerUndo(item.src, a, () => restore(snap)); }
     else say(`${esc(first())} sent it back: <i>"Add the joining bonus clause."</i> I've reopened the draft.`);
     paint();
   };
@@ -264,7 +315,7 @@ function approve(btn, what, after) {
 }
 function reviewPending(pid) {
   const item = D.pending.find(x => x.id === pid); if (!item) return say("That approval is already done.");
-  const d = desk(`<div class="card draft"><h4><span class="kind">Approval</span>${esc(item.what)} <span class="pill p-warn">Waiting for you</span></h4><div class="c">
+  const d = desk(`<div class="card draft"><h4><span class="kind">Desk drafted</span>${esc(item.what)} <span class="pill p-warn">Waiting for you</span></h4><div class="c">
     <div class="why">Drafted by Ritu. Approving sends it and logs your name.</div>
     <div class="row"><button class="btn primary" type="button" data-pa="1">Approve and send</button><button class="btn" type="button" data-pa="0">Send back</button></div></div></div>`);
   item.card = d;
@@ -294,10 +345,24 @@ function runTask(key, echo) {
 }
 
 function chase() {
-  if (D.done.chase) return say("Already chased. I'll escalate to Vikram at 4 pm if Arjun stays silent.");
-  D.done.chase = 1; task("chase").ctx = "Nudged on WhatsApp · escalates to Vikram at 4 pm"; paint();
+  if (D.done.chase) {
+    const next = new Date(D.done.chase.at.getTime() + 4 * 3600e3);
+    if (Date.now() < next) return say(`Arjun Mehta was chased at ${fmtIST(D.done.chase.at)} by ${esc(D.done.chase.by)}. You can chase again after ${fmtIST(next)}. I'll escalate to Vikram at ${T.esc} if he stays silent.`);
+  }
+  later(() => desk(`<div class="card draft" data-subject="chase-arjun"><h4><span class="kind">Desk drafted</span>WhatsApp nudge to Arjun Mehta</h4><div class="c">
+    <div class="doc">Feedback pending for Ankit Verma and Lakshmi R., Backend Developer, interviewed yesterday. Reply with a score, or tap a button.</div>
+    <div class="why">An internal reminder to your interviewer. It goes out when you tap Send. One chase per 4 hours.</div>
+    <div class="row"><button class="btn primary" type="button" data-a="sendChase">Send nudge</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`));
+}
+ACT.sendChase = b => {
+  const card = b.closest(".card"); card.querySelectorAll(".c > .row button").forEach(x => x.disabled = true);
+  D.done.chase = { at: new Date(), by: first() };
+  D.audit.push({ id: id(), what: "Chased Arjun Mehta for interview feedback", by: first(), at: D.done.chase.at });
+  task("chase").ctx = `Chased ${fmtIST(D.done.chase.at)} by ${D.done.chase.by} · escalates to Vikram at ${T.esc}`;
+  ink(card, D.done.chase.by, D.done.chase.at); card.querySelector(".inklabel").textContent = `Chased ${fmtIST(D.done.chase.at)} by ${D.done.chase.by}`;
+  paint();
   later(() => {
-    say(`Done. I sent Arjun Mehta a WhatsApp nudge with one-tap scoring. If he doesn't reply, I'll escalate to Vikram (Head of Engineering) at 4 pm.<div class="why" style="margin-top:6px">Why it matters: candidates who wait more than 3 days for an update often take another offer.</div>`);
+    say(`Arjun Mehta gets a WhatsApp nudge with one-tap scoring. ${PREVIEW_SENT} If he doesn't reply, I'll escalate to Vikram (Head of Engineering) at ${T.esc}.<div class="why" style="margin-top:6px">Why it matters: candidates who wait more than 3 days for an update often take another offer.</div>`);
     wa("Arjun Mehta (interviewer)", "Feedback pending for <b>Ankit Verma</b> and <b>Lakshmi R.</b>, Backend Developer, interviewed yesterday. Reply with a score, or tap:",
       [["Ankit: 4/5, strong APIs, weak SQL. Next round.", feedback], ["Ankit: 2/5, not a fit", feedbackNo]]);
     chips([["Show my pipeline", pipeline], ["Draft Sneha's letter", letter]]);
@@ -314,7 +379,7 @@ function feedback() {
 function feedbackNo() { feedbackIn(); person("Ankit Verma").where = "Scored 2/5"; paint(); say("Arjun scored Ankit 2/5, not a fit. Want me to draft a rejection with a job-relevant reason?"); chips([["Yes, draft it", () => reasonPicker("Ankit Verma")]]); }
 ACT.advance = b => {
   const p = person("Ankit Verma"), prev = p.where; p.where = "Round 2 with Head of Engineering"; paint();
-  const d = say(`Moved Ankit to Round 2 and drafted his update: <i>"Round 2 with the Head of Engineering. You'll hear from us by Thu 19 Nov."</i> <span class="undo">· <button class="link" type="button">Undo</button> (10 min)</span>`);
+  const d = say(`Moved Ankit to Round 2 and drafted his update: <i>"Round 2 with the Head of Engineering. You'll hear from us by ${T.day(8)}."</i> <span class="undo">· <button class="link" type="button">Undo</button> (10 min)</span>`);
   const t = setTimeout(() => d.querySelector(".undo")?.remove(), 10 * 60 * 1000);
   d.querySelector(".undo button").onclick = () => { clearTimeout(t); d.querySelector(".undo").remove(); b.disabled = false; p.where = prev; paint(); say("Undone. Ankit is back where he was and no update was sent."); };
 };
@@ -330,31 +395,45 @@ function reasonPicker(name) {
 }
 ACT.sendReject = b => {
   const card = b.closest(".card"), r = card.querySelector("select"), label = r.options[r.selectedIndex].text, name = card.dataset.name;
-  approve(b, `a rejection note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Rejected"; p.where = `Rejected: ${label.toLowerCase()}`; } say(`Sent. ${esc(name)}'s status page is closed with that reason.`); });
+  approve(b, `a rejection note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Rejected"; p.where = `Rejected: ${label.toLowerCase()}`; } say(`Approved. ${PREVIEW_SENT} ${esc(name)}'s Closure Note carries that reason.`); });
 };
 
 function letter() {
   if (D.done.letter) return say("Sneha's letter is already handled.");
   D.done.letter = 1;
   later(() => desk(`<div class="bubble">Here's Sneha's appointment letter, filled from her accepted offer.</div>
-  <div class="card draft"><h4><span class="kind">Approval</span>Appointment letter · Sneha Rao <span class="pill p-acc">Draft</span></h4><div class="c">
+  <div class="card draft"><h4><span class="kind">Desk drafted</span>Appointment letter · Sneha Rao <span class="pill p-acc">Draft</span></h4><div class="c">
   <div class="doc">Dear Sneha,
-We are pleased to appoint you as Product Designer at Acme Fintech Pvt Ltd, effective Mon 16 Nov 2026.
+We are pleased to appoint you as Product Designer at Acme Fintech Pvt Ltd, effective ${T.dayYear(5)}.
 CTC: ₹9,60,000 per year (breakdown in Annexure A). Probation: 6 months.
 Notice period: 30 days after confirmation …</div>
-  <div class="why">Filled from the offer approved on 2 Nov. Template from the Clearstage playbook. Not legal advice.</div>
+  <div class="why">Filled from the offer approved on ${T.dayShort(-9)}. Template from the Clearstage playbook. Not legal advice.</div>
   <div class="row"><button class="btn primary" type="button" data-a="sendLetter">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div></div></div>`));
 }
 ACT.noop = () => say("Editing drafts isn't in this preview yet. In the full product this opens the draft for editing.");
-ACT.rejectDraft = b => { b.closest(".card").querySelectorAll("button").forEach(x => x.disabled = true); say("Draft discarded. Nothing was sent."); };
+// QA-021: a fixed list of reasons, the same protected-word block as closures, stored with the audit event
+const DRAFT_REJECT_REASONS = ["Wrong details (date, amount or name)", "Wrong tone or wording", "Not needed any more", "Needs a policy or legal check", "Duplicate of another draft"];
+ACT.rejectDraft = b => {
+  const card = b.closest(".card"); if (card.querySelector("[data-rr]")) return;
+  const what = card.querySelector("h4")?.textContent.replace(/^(Desk drafted|Approval)\s*/, "").replace(/\s*(Waiting for.*|Draft|Check (passed|failed))$/, "").trim() || "draft";
+  card.querySelector(".c").insertAdjacentHTML("beforeend", `<div class="row" data-rr><span class="note">Why reject it?</span>${DRAFT_REJECT_REASONS.map(r => `<button class="fchip" type="button">${esc(r)}</button>`).join("")}
+    <label class="field" style="flex:1;min-width:180px">Note (optional)<input type="text" maxlength="140" data-rnote></label></div>`);
+  card.querySelectorAll("[data-rr] .fchip").forEach(x => x.onclick = () => {
+    const note = card.querySelector("[data-rnote]").value.trim();
+    if (note && blocked(note)) return say("That note mentions a protected trait. Use a job-relevant reason only.");
+    card.querySelectorAll("button").forEach(y => y.disabled = true);
+    D.audit.push({ id: id(), what: `Rejected ${what}: ${x.textContent}${note ? " · " + note : ""}`, by: first(), at: new Date() });
+    say(`Rejected with the reason "${esc(x.textContent)}" and logged. Nothing was sent.`); paint();
+  });
+};
 ACT.sendLetter = b => approve(b, "Sneha's appointment letter", () => {
   closeTask("letter"); const s = person("Sneha Rao"); s.checklist[1].done = true;
-  say("Sent to Sneha for e-acknowledgement. Her joiner checklist is on track for Monday.");
+  say(`Sneha gets it for e-acknowledgement. ${PREVIEW_SENT} Her joiner checklist is on track for ${T.weekday(5)}.`);
 });
 function remindIT() {
   const kiran = !task("laptop") || task("laptop").done ? true : false;
   const who = task("laptop") && !task("laptop").done ? "Sneha" : "Kiran";
-  say(`I sent Suresh (IT) a WhatsApp reminder for ${who}'s laptop and email.`);
+  say(`Suresh (IT) gets a WhatsApp reminder for ${who}'s laptop and email. ${PREVIEW_SENT}`);
   wa("Suresh (IT)", `Reminder: laptop and email for <b>${who}</b> before Day 1.`, [["Done, ready", () => {
     closeTask(who === "Sneha" ? "laptop" : "kiranLaptop");
     const p = person(who === "Sneha" ? "Sneha Rao" : "Kiran S."); const c = p.checklist?.find(x => x.t === "Laptop and email"); if (c) c.done = true;
@@ -385,14 +464,14 @@ function fill(k, v) { draftRole[k] = v; later(askRoleGaps, 250); }
 function roleCard() {
   const d = draftRole;
   desk(`<div class="bubble">Here's the role. Check it, then send it for approval.</div>
-  <div class="card draft"><h4><span class="kind">Approval</span>${esc(d.title)} · ${esc(d.city)} · ${d.count} opening${d.count > 1 ? "s" : ""} <span class="pill p-acc">Needs approval</span></h4><div class="c">
+  <div class="card draft"><h4><span class="kind">Desk drafted</span>${esc(d.title)} · ${esc(d.city)} · ${d.count} opening${d.count > 1 ? "s" : ""} <span class="pill p-acc">Needs approval</span></h4><div class="c">
   <table><tr><td>Budget</td><td>${fmtBudget(d.budget)} CTC each</td></tr><tr><td>Experience</td><td>${esc(d.exp)}</td></tr><tr><td>Stages</td><td>Applied → Screened → Interview → Offer</td></tr><tr><td>Openings</td><td>${d.count}${d.countStated ? "" : " (you didn't say how many, so I assumed 1)"}</td></tr><tr><td>Start</td><td>${startLabel(d.start)}</td></tr><tr><td>Job description</td><td>Draft ready to review</td></tr></table>
   <div class="row"><button class="btn primary" type="button" data-a="sendRole" data-once>Send for approval on WhatsApp</button><button class="btn" type="button" data-a="noop">Edit JD</button></div></div></div>`);
   defaults();
 }
 ACT.sendRole = () => {
   const d = { ...draftRole };
-  say(`Sent to ${esc(phoneLabel())} on WhatsApp. One word approves it.`);
+  say(`In the live product this goes to ${esc(phoneLabel())} on WhatsApp, and one word approves it. This preview sent nothing.`);
   wa(phoneLabel(), `New role to approve: <b>${d.count} × ${esc(d.title)}, ${esc(d.city)}</b>, ${fmtBudget(d.budget)} each, ${esc(d.exp)}, start ${startLabel(d.start).toLowerCase()}. Reply YES to approve.`, [
     ["YES", () => { addRole(d, d.count); logApproval(`${d.title} role`, first()); paint(); say(`<span class="pill p-ok">Approved by ${esc(first())}</span> ${esc(d.title)} is live. I'll acknowledge every applicant within 24 hours.`); }],
     ...(d.count > 1 ? [["Make it 1 opening", () => { addRole(d, 1); logApproval(`${d.title} role (1 opening)`, first()); paint(); say("Approved with 1 opening. I've updated the role and it's live."); }]] : [])]);
@@ -430,59 +509,63 @@ const FAISAL = [
   { name: "Basic + DA", kind: "basic", amount: 270000 }, { name: "HRA", kind: "hra", amount: 108000 },
   { name: "Special allowance", kind: "special", amount: 140400 }, { name: "Employer PF", kind: "employer_pf", amount: 21600 }];
 function faisalOffer() {
-  if (task("faisalOffer").done) return say("Faisal's offer letter is already approved and sent.");
-  later(() => desk(`<div class="bubble">Faisal Khan's offer letter is ready. I prepared it at 5:40 pm IST from the approved Customer Success Associate role. Nothing has been sent.</div>
-  <div class="card ctc"><h4><span class="kind">Offer · CTC</span>Faisal Khan · Customer Success Associate <span class="pill p-ok">Check passed</span></h4><div class="c">${ctcBlock(FAISAL)}</div></div>
-  <div class="card draft"><h4><span class="kind">Approval</span>Offer letter · Faisal Khan <span class="pill p-warn">Waiting for ${esc(first())}</span></h4><div class="c">
+  if (task("faisalOffer").done) return say("Faisal's offer letter is already approved.");
+  later(() => desk(`<div class="bubble">Faisal Khan's offer letter is ready. I prepared it at ${T.drafted} from the approved Customer Success Associate role. Nothing has been sent.</div>
+  <div class="card ctc"><h4><span class="kind">Salary check</span>Faisal Khan · Customer Success Associate <span class="pill p-ok">Check passed</span></h4><div class="c">${ctcBlock(FAISAL)}</div></div>
+  <div class="card draft"><h4><span class="kind">Desk drafted</span>Offer letter · Faisal Khan <span class="pill p-warn">Waiting for ${esc(first())}</span></h4><div class="c">
   <div class="doc">Dear Faisal,
 We are pleased to offer you the role of Customer Success Associate at Acme Fintech Pvt Ltd, Hyderabad.
-CTC: ₹5,40,000 per year (breakdown in Annexure A). Joining date: Mon 7 Dec 2026. Probation: 6 months.
+CTC: ₹5,40,000 per year (breakdown in Annexure A). Joining date: ${T.dayYear(26)}. Probation: 6 months.
 This offer is valid for 3 days from the date it is sent …</div>
   <div class="why">Email to Faisal Khan. Within the role's budget (₹4.5–6 L). Template from the Clearstage playbook. Not legal advice.</div>
   <div class="row"><button class="btn primary" type="button" data-a="sendFaisal">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div>
   <div class="note">Nothing is sent until you approve it.</div></div></div>`));
 }
 ACT.sendFaisal = b => approve(b, "Faisal Khan's offer letter", () => {
-  closeTask("faisalOffer"); person("Faisal Khan").where = "Offer sent · valid 3 days";
-  say("Offer sent to Faisal by email, valid for 3 days. I'll remind him on day 2.");
+  closeTask("faisalOffer"); person("Faisal Khan").where = "Offer approved · valid 3 days once it goes out";
+  say(`Faisal's offer is approved, valid for 3 days. ${PREVIEW_SENT} I'll remind him on day 2.`);
 });
 function offer() {
   if (D.done.offerSent) return say("Kiran's offer has already gone out.");
   later(() => desk(`<div class="bubble">Kiran's offer at ₹12 L. I checked the structure before anything goes out.</div>
-  <div class="card ctc"><h4><span class="kind">Offer · CTC</span>Kiran S. · Backend Developer <span class="pill p-late">Check failed</span></h4><div class="c">${ctcBlock(KIRAN)}
+  <div class="card draft" data-subject="kiran-offer"><h4><span class="kind">Desk drafted</span>Offer · Kiran S. · Backend Developer <span class="pill p-late">Check failed</span></h4><div class="c">
+  <div class="ctcpanel">${ctcBlock(KIRAN)}</div>
   <div class="row"><button class="btn primary" type="button" data-a="fixCtc" data-once>Fix the structure for me</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
 }
-ACT.fixCtc = b => {
-  const card = b.closest(".card"), c = b.closest(".c");
-  c.innerHTML = ctcBlock(fixStructure(KIRAN)) + `<div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve and send offer</button></div>`;
-  bind(c); card.querySelector("h4 .pill").outerHTML = '<span class="pill p-ok">Check passed</span>';
+ACT.fixCtc = () => {
+  // a newer draft: the older card is marked "Replaced by a newer draft" and its buttons stop working
+  desk(`<div class="bubble">Fixed: Basic + DA is now 50% of pay. CTC is unchanged.</div>
+  <div class="card draft" data-subject="kiran-offer"><h4><span class="kind">Desk drafted</span>Offer · Kiran S. · Backend Developer <span class="pill p-ok">Check passed</span></h4><div class="c">
+  <div class="ctcpanel">${ctcBlock(fixStructure(KIRAN))}</div>
+  <div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve and send offer</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div>
+  <div class="note">Nothing is sent until you approve it.</div></div></div>`);
 };
 ACT.sendOffer = b => approve(b, "Kiran's offer letter", () => {
-  D.done.offerSent = 1; closeTask("offer"); person("Kiran S.").where = "Offer sent · valid 3 days";
-  say("Offer sent to Kiran, valid for 3 days. I'll remind him on day 2."); chips([["Kiran accepted the offer", accepted], ["Show my pipeline", () => pipeline()]]);
+  D.done.offerSent = 1; closeTask("offer"); person("Kiran S.").where = "Offer approved · valid 3 days once it goes out";
+  say(`Kiran's offer is approved, valid for 3 days. ${PREVIEW_SENT} I'll remind him on day 2.`); chips([["Kiran accepted the offer", accepted], ["Show my pipeline", () => pipeline()]]);
 });
 
 function accepted() {
   if (!D.done.offerSent) return say("Kiran doesn't have an offer yet. Want me to build it?") && chips([["Build Kiran's offer", offer]]);
   if (D.done.accepted) return say("Kiran's onboarding has already started. See Joiners & probation.");
   D.done.accepted = 1;
-  const k = person("Kiran S."); Object.assign(k, { type: "Joiner", stage: "Hired", roleTitle: "Backend Developer", where: "Joins Mon 30 Nov", day1: "Mon 30 Nov",
+  const k = person("Kiran S."); Object.assign(k, { type: "Joiner", stage: "Hired", roleTitle: "Backend Developer", where: `Joins ${T.day(19)}`, day1: T.day(19),
     checklist: [{ t: "Documents uploaded", done: true }, { t: "Appointment letter", done: false }, { t: "Laptop and email", done: false }, { t: "Day 1 plan and buddy", done: false }],
-    probation: { ends: "Sun 30 May 2027", manager: "Arjun Mehta", status: "Scheduled 14 May 2027" } });
+    probation: { ends: T.dayYear(19 + 182), manager: "Arjun Mehta", status: `Scheduled ${T.dayYear(19 + 167)}` } });
   const be = roleOf(1); be.status = "Filled";
-  D.tasks.push({ id: id(), key: "kiranLetter", title: "Kiran's appointment letter", ctx: "Due Wed 25 Nov · joins Mon 30 Nov", owner: "hr", when: "This week", done: false },
-    { id: id(), key: "kiranLaptop", title: "Laptop and email for Kiran", ctx: "Due Fri 27 Nov", owner: "Suresh (IT)", when: "This week", done: false });
+  D.tasks.push({ id: id(), key: "kiranLetter", title: "Kiran's appointment letter", ctx: `Due ${T.day(14)} · joins ${T.day(19)}`, owner: "hr", when: "This week", done: false },
+    { id: id(), key: "kiranLaptop", title: "Laptop and email for Kiran", ctx: `Due ${T.day(16)}`, owner: "Suresh (IT)", when: "This week", done: false });
   paint();
   later(() => {
-    desk(`<div class="bubble">Kiran accepted. I created his employee record and started onboarding. Joining Mon 30 Nov.</div>
-  <div class="card"><h4><span class="kind">Joiner checklist</span>Kiran S. · Day 1 on Mon 30 Nov <span class="pill p-acc">On track</span></h4>
-   <div class="item"><span class="pill p-ok">Done</span><div class="t">Document upload link sent to Kiran<small>PAN, Aadhaar (masked), education, last payslip · consent recorded</small></div></div>
-   <div class="item"><span class="pill p-warn">Due 25 Nov</span><div class="t">Appointment letter<small>Owner: ${esc(ownerName("hr"))}</small></div><button class="btn" type="button" data-a="kiranLetter">Draft now</button></div>
-   <div class="item"><span class="pill p-warn">Due 27 Nov</span><div class="t">Laptop and email account<small>Owner: Suresh (IT) · reminder set on WhatsApp</small></div></div>
+    desk(`<div class="bubble">Kiran accepted. I created his employee record and started onboarding. Joining ${T.day(19)}.</div>
+  <div class="card"><h4><span class="kind">Joiner checklist</span>Kiran S. · Day 1 on ${T.day(19)} <span class="pill p-acc">On track</span></h4>
+   <div class="item"><span class="pill p-ok">Done</span><div class="t">Document upload link ready for Kiran<small>PAN, Aadhaar (masked), education, last payslip · consent recording is planned, not built yet</small></div></div>
+   <div class="item"><span class="pill p-warn">Due ${T.dayShort(14)}</span><div class="t">Appointment letter<small>Owner: ${esc(ownerName("hr"))}</small></div><button class="btn" type="button" data-a="kiranLetter">Draft now</button></div>
+   <div class="item"><span class="pill p-warn">Due ${T.dayShort(16)}</span><div class="t">Laptop and email account<small>Owner: Suresh (IT) · reminder set on WhatsApp</small></div></div>
    <div class="item"><span class="pill p-acc">Planned</span><div class="t">Day 1 plan and buddy (Arjun Mehta)<small>30-60-90 plan from the playbook</small></div></div>
-   <div class="item"><span class="pill p-acc">Scheduled</span><div class="t">Probation review with Arjun Mehta, due 14 May 2027<small>15 days before the 6-month end date</small></div></div>
+   <div class="item"><span class="pill p-acc">Scheduled</span><div class="t">Probation review with Arjun Mehta, due ${T.dayYear(19 + 167)}<small>15 days before the 6-month end date</small></div></div>
   </div><div class="why">From offer accepted to Day 1 to confirmation: one record, nothing re-entered.</div>`);
-    wa("Suresh (IT)", "New joiner <b>Kiran S.</b> on Mon 30 Nov. Laptop and email needed by Fri 27 Nov.", [["Will do", () => say("Suresh confirmed he'll have Kiran's laptop and email ready.")]]);
+    wa("Suresh (IT)", `New joiner <b>Kiran S.</b> on ${T.day(19)}. Laptop and email needed by ${T.day(16)}.`, [["Will do", () => say("Suresh confirmed he'll have Kiran's laptop and email ready.")]]);
     defaults();
   });
 }
@@ -490,13 +573,13 @@ ACT.kiranLetter = () => { me("Draft Kiran's appointment letter"); kiranLetter();
 function kiranLetter() {
   if (D.done.kiranLetter) return say("Kiran's letter is already drafted.");
   D.done.kiranLetter = 1;
-  later(() => desk(`<div class="card draft"><h4><span class="kind">Approval</span>Appointment letter · Kiran S. <span class="pill p-acc">Draft</span></h4><div class="c">
+  later(() => desk(`<div class="card draft"><h4><span class="kind">Desk drafted</span>Appointment letter · Kiran S. <span class="pill p-acc">Draft</span></h4><div class="c">
   <div class="doc">Dear Kiran,
-We are pleased to appoint you as Backend Developer at Acme Fintech Pvt Ltd, effective Mon 30 Nov 2026.
+We are pleased to appoint you as Backend Developer at Acme Fintech Pvt Ltd, effective ${T.dayYear(19)}.
 CTC: ₹12,00,000 per year (breakdown in Annexure A). Probation: 6 months …</div>
   <div class="row"><button class="btn primary" type="button" data-a="sendKiranLetter">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
 }
-ACT.sendKiranLetter = b => approve(b, "Kiran's appointment letter", () => { closeTask("kiranLetter"); person("Kiran S.").checklist[1].done = true; say("Sent to Kiran for e-acknowledgement."); });
+ACT.sendKiranLetter = b => approve(b, "Kiran's appointment letter", () => { closeTask("kiranLetter"); person("Kiran S.").checklist[1].done = true; say(`Kiran gets it for e-acknowledgement. ${PREVIEW_SENT}`); });
 
 function bulk() {
   if (D.done.bulk) return say("Those 4 rejection notes have already gone out.");
@@ -510,30 +593,30 @@ function bulk() {
 ACT.sendBulk = b => approve(b, "4 rejection notes", () => {
   D.done.bulk = 1; closeTask("bulk");
   D.people.filter(p => p.failed).forEach(p => { p.stage = "Rejected"; p.where = "Rejected: assessment below 60%"; });
-  say("Sent. All 4 status pages are closed with a reason. Candidates told within 7 days this week: 100%.");
+  say(`Approved. ${PREVIEW_SENT} All 4 Closure Notes carry a reason. Candidates told within 7 days this week: 100%.`);
 });
 
 function probation() {
   if (D.done.prob) return say("Priya's review is already with Vikram.");
-  D.done.prob = 1; const pr = person("Priya Nair"); pr.probation.status = "With Vikram"; pr.where = "Review with Vikram, due Sat 14 Nov";
-  const t = task("probation"); t.title = "Vikram to review Priya's probation"; t.owner = "Vikram"; t.ctx = "3-question review sent on WhatsApp · due Sat 14 Nov"; paint();
+  D.done.prob = 1; const pr = person("Priya Nair"); pr.probation.status = "With Vikram"; pr.where = `Review with Vikram, due ${T.day(3)}`;
+  const t = task("probation"); t.title = "Vikram to review Priya's probation"; t.owner = "Vikram"; t.ctx = `3-question review on WhatsApp · due ${T.day(3)}`; paint();
   later(() => {
-    say("I sent Vikram, Priya's manager, a 3-question review on WhatsApp, due in 3 days. I'll escalate if it slips.");
-    wa("Vikram (manager)", "Priya Nair's probation ends on Mon 23 Nov. Your call:", [
+    say(`Vikram, Priya's manager, gets a 3-question review on WhatsApp, due in 3 days. ${PREVIEW_SENT} I'll escalate if it slips.`);
+    wa("Vikram (manager)", `Priya Nair's probation ends on ${T.day(12)}. Your call:`, [
       ["Confirm Priya", () => desk(`<div class="bubble">Vikram recommends confirming Priya. Here's the letter.</div>
-       <div class="card draft"><h4><span class="kind">Approval</span>Confirmation letter · Priya Nair <span class="pill p-acc">Draft</span></h4><div class="c"><div class="doc">Dear Priya,
-We are happy to confirm your employment as Customer Success Associate with effect from 23 Nov 2026 …</div>
+       <div class="card draft"><h4><span class="kind">Desk drafted</span>Confirmation letter · Priya Nair <span class="pill p-acc">Draft</span></h4><div class="c"><div class="doc">Dear Priya,
+We are happy to confirm your employment as Customer Success Associate with effect from ${T.dayYear(12)} …</div>
        <div class="row"><button class="btn primary" type="button" data-a="sendConf">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`)],
       ["Extend by 3 months", () => { pr.probation.status = "Extended"; pr.where = "Probation extended by 3 months"; closeTask("probation"); paint(); say("Vikram wants an extension. I'll draft the extension letter with his reasons and set a new review date."); }]]);
   });
 }
-ACT.sendConf = b => approve(b, "Priya's confirmation letter", () => { const pr = person("Priya Nair"); pr.probation.status = "Confirmed"; pr.where = "Confirmed from 23 Nov"; closeTask("probation"); say("Sent. Priya acknowledged it."); });
+ACT.sendConf = b => approve(b, "Priya's confirmation letter", () => { const pr = person("Priya Nair"); pr.probation.status = "Confirmed"; pr.where = `Confirmed from ${T.dayShort(12)}`; closeTask("probation"); say(`Approved. ${PREVIEW_SENT}`); });
 
 function wrap() {
   const open = D.tasks.filter(t => !t.done), late = open.filter(t => t.when === "Late").length;
   later(() => desk(`<div class="bubble">Here's your day.</div>
   <div class="card"><h4><span class="kind">End of day</span>${new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</h4>
-   <div class="item"><span class="pill p-ok">Approved</span><div class="t">${D.audit.length} item${D.audit.length === 1 ? "" : "s"} approved today<small>${D.audit.length ? D.audit.map(a => esc(a.what) + " by " + esc(a.by)).join(" · ") : "Nothing approved yet"}</small></div></div>
+   <div class="item"><span class="pill p-ok">Approved</span><div class="t">${approvalsOnly().length} item${approvalsOnly().length === 1 ? "" : "s"} approved today<small>${approvalsOnly().length ? approvalsOnly().map(a => esc(a.what) + " by " + esc(a.by)).join(" · ") : "Nothing approved yet"}</small></div></div>
    <div class="item"><span class="pill ${late ? "p-late" : "p-ok"}">${late ? "Late" : "Clear"}</span><div class="t">${open.length} open task${open.length === 1 ? "" : "s"}, ${late} late<small>${late ? "I'll put the late ones first in tomorrow's brief." : "Nothing is late."}</small></div></div>
   </div>`));
 }
@@ -555,7 +638,7 @@ function renderLiveCard(c) {
   const acts = (c.actions || []).map((a, i) => `<button class="btn${i === 0 ? " primary" : ""}" type="button" data-live='${esc(JSON.stringify({ action: a.action, params: a.params }))}'>${esc(a.label)}</button>`).join("");
   const wait = c.waiting_for_other ? `<span class="pill p-warn">Waiting for ${esc(c.approver || "approval")}</span>` : "";
   if (c.type === "brief") return `<div class="card"><h4><span class="kind">Brief · ${c.open} open</span>${c.late ? `<span class="pill p-late">${c.late} late</span>` : ""}</h4>${c.items.map(i => `<div class="item"><span class="pill ${pillCls[i.pill] || "p-mut"}">${esc(i.bucket)}</span><div class="t">${esc(i.title)}<small>${esc(i.why || "")}${i.owner ? " · Owner: " + esc(i.owner) : ""}</small></div></div>`).join("") || '<div class="item"><div class="t">All clear.</div></div>'}</div>`;
-  if (c.type === "approval") return `<div class="card draft"><h4><span class="kind">Approval</span>${esc(c.title)} ${wait}</h4><div class="c"><div class="doc">${esc(c.preview)}</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
+  if (c.type === "approval") return `<div class="card draft"><h4><span class="kind">Desk drafted</span>${esc(c.title)} ${wait}</h4><div class="c"><div class="doc">${esc(c.preview)}</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
   if (c.type === "pipeline") return `<div class="card"><h4><span class="kind">Pipeline</span>${esc(c.role)} · ${c.days_open} days open</h4><div class="c"><div class="board">${c.columns.map(col => `<div class="col"><h5>${esc(col.stage)} · ${col.count}</h5>${col.people.map(n => `<span class="cand">${esc(n)}</span>`).join("")}${col.more ? `<span class="note">+${col.more} more</span>` : ""}</div>`).join("")}</div></div></div>`;
   if (c.type === "offer") return `<div class="card ctc"><h4><span class="kind">Offer · CTC</span>${c.ctc_display} <span class="pill ${c.passes ? "p-ok" : "p-late"}">${c.passes ? "Check passed" : "Check failed"}</span></h4><div class="c"><div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${c.components.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.display.slice(1))}</td></tr>`).join("")}</table></div><div class="row"><span class="pill ${c.passes ? "p-ok" : "p-late"}">Wages ${c.wages_percent}% of pay</span><span class="note">${esc(c.note)}</span></div><div class="why">${esc(c.legal)} Rule: ${esc(c.citation)}. Status: ${esc(c.status)}.</div></div></div>`;
   if (c.type === "scorecard") return `<div class="card"><h4><span class="kind">Scorecard</span><span class="pill p-ok">${esc(c.recommendation.replace("_", " "))}</span></h4><div class="c"><table><tr><th>Criterion</th><th>Score</th></tr>${Object.entries(c.scores).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v} / 5</td></tr>`).join("")}</table></div></div>`;
@@ -615,20 +698,21 @@ function route(t) {
 function confirmScreen() {
   const iv = D.interviews.find(i => i.cand === "Arjun Rao");
   if (iv.confirmed) return say("Arjun Rao has already confirmed today's screen call.");
-  later(() => desk(`<div class="card draft"><h4><span class="kind">Approval</span>Message to Arjun Rao <span class="pill p-acc">Draft</span></h4><div class="c">
-    <div class="doc">Hi Arjun, this is a reminder of your screen call with Acme Fintech today at 4:00 PM for the Customer Success Associate role. Reply YES to confirm, or tap the link to pick another time.</div>
+  later(() => desk(`<div class="card draft"><h4><span class="kind">Desk drafted</span>Message to Arjun Rao <span class="pill p-acc">Draft</span></h4><div class="c">
+    <div class="doc">Hi Arjun, this is a reminder of your screen call with Acme Fintech today at ${T.screen} for the Customer Success Associate role. Reply YES to confirm, or tap the link to pick another time.</div>
     <div class="row"><button class="btn primary" type="button" data-a="sendConfirm">Approve and send</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`));
 }
 ACT.sendConfirm = b => approve(b, "a confirmation message to Arjun Rao", () => {
-  say("Sent to Arjun Rao on WhatsApp.");
-  wa("Arjun Rao (candidate)", "Reminder: screen call with Acme Fintech today at 4:00 PM. Reply YES to confirm.", [["YES", () => { D.interviews.find(i => i.cand === "Arjun Rao").confirmed = true; person("Arjun Rao").where = "Screen call today 4 PM, confirmed"; paint(); say("Arjun Rao confirmed today's screen call."); }]]);
+  say(`Arjun Rao gets it on WhatsApp. ${PREVIEW_SENT}`);
+  wa("Arjun Rao (candidate)", `Reminder: screen call with Acme Fintech today at ${T.screen}. Reply YES to confirm.`, [["YES", () => { D.interviews.find(i => i.cand === "Arjun Rao").confirmed = true; person("Arjun Rao").where = `Screen call today ${T.screen}, confirmed`; paint(); say("Arjun Rao confirmed today's screen call."); }]]);
 });
 function openCandidateNoEcho(name) { const p = person(name); say(`<b>${esc(name)}</b> · ${esc(roleOf(p.role)?.title || "")} · ${esc(p.stage)}: ${esc(p.where)}. Owner: ${esc(ownerName(p.owner))}.`); }
 
 $("#ask").addEventListener("submit", e => { e.preventDefault(); const v = $("#q").value.trim(); if (!v) return; if (currentTab !== "desk") location.hash = "desk"; me(v); $("#q").value = ""; route(v); });
 $("#file").addEventListener("change", e => {
   const files = [...e.target.files]; e.target.value = "";
-  if (files.some(f => /\.zip$/i.test(f.name)) || files.length > 1) { if (currentTab !== "desk") location.hash = "desk"; return SCR.upload(files, "Backend Developer"); }
+  // QA-024: PDF, DOCX and ZIP all go through the same screening pipeline, for the role in the current context
+  if (files.some(f => /\.(zip|pdf|docx)$/i.test(f.name))) { if (currentTab !== "desk") location.hash = "desk"; return SCR.upload(files.filter(f => /\.(zip|pdf|docx)$/i.test(f.name))); }
   const f = files[0]; if (!f) return;
   me(`Uploaded ${f.name}`);
   later(() => { desk(`<div class="bubble">Got <b>${esc(f.name)}</b>. Reading CVs isn't in this preview yet, so I'll add a placeholder record. Which role is it for?</div>`);
@@ -700,7 +784,13 @@ function renderTab() {
     const rank = p => p.late ? 0 : p.stage === "Offer" ? 1 : p.type === "Joiner" ? 2 : p.probation && p.probation.status === "Review due" ? 3 : p.failed && p.stage !== "Rejected" ? 4 : p.stage === "Interview" ? 5 : p.stage === "Rejected" ? 9 : 6;
     const list = D.people.filter(p => (V.type === "All" || p.type === V.type) && ownerMatch(p.owner) && SCR.passesFilter(p) &&
       (!q || [p.name, p.roleTitle, roleOf(p.role)?.title, p.where].join(" ").toLowerCase().includes(q)))
-      .map((p, i) => [p, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
+      .map((p, i) => [p, i]).sort((a, b) => {
+        // QA-015: screened people to act on first (human look, top 10 by fit, other scored by fit), then the rest
+        // groups: 0 existing items needing action, 1 screened and open, 2 other unscored, 3 closed
+        const g = p => p.stage === "Rejected" ? 3 : p.screen ? (p.screen.status === "new" ? 1 : 2) : rank(p) < 6 ? 0 : 2;
+        const ka = SCR.sortKey(a[0]), kb = SCR.sortKey(b[0]);
+        return (g(a[0]) - g(b[0])) || (ka[0] - kb[0]) || (ka[1] - kb[1]) || (ka[2] - kb[2]) || rank(a[0]) - rank(b[0]) || a[1] - b[1];
+      }).map(x => x[0]);
     const cc = counts();
     html = head("Candidates & people", `${plural(cc.activeCands.length, "active candidate")} · ${cc.people} people in total · needs action first`) +
       `<div class="toolbar"><label class="sr" for="pq">Search people</label><input type="search" id="pq" data-vf="q" placeholder="Search by name, role or status" value="${esc(V.q)}">
@@ -731,6 +821,7 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "task") return withDesk(() => runTask(b.dataset.key, true));
   if (b.dataset.v === "newRole") return withDesk(() => { me("I want to open a new role"); say("Sure. Tell me the role, city and budget, for example <i>\"Ek data analyst chahiye Bangalore mein, 8-10L\"</i>."); chips([["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")], ["Hire 2 sales execs in Pune", () => hireFrom("Hire 2 sales execs in Pune")]]); });
   if (b.dataset.v === "person") return openPerson(b.dataset.pid);
+  if (b.dataset.v === "undo") { const a = D.audit.find(x => String(x.id) === b.dataset.aid); if (a) undoApproval(a); return; }
   if (b.dataset.v === "back") { V.personId = null; return renderTab(); }
   if (b.dataset.v === "ask") return withDesk(() => { me(b.dataset.text); route(b.dataset.text); });
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
@@ -776,7 +867,7 @@ function personDetail(p) {
       <div><span class="pill ${wherePill(p)}">${esc(p.where)}</span></div>
       ${p.score ? `<div class="note">Excel assessment: ${p.score}% (bar is 60%)</div>` : ""}
     </div></div>${SCR.whyPanel(p)}${extra}${prob}
-    <p class="note">This view only shows information. Changes happen in Desk, through approval.</p>`;
+    <p class="note">This view shows information. Working marks (Pin, Contacted, star changes) are saved here. Anything that sends a message or changes a candidate's stage goes through Desk.</p>`;
 }
 
 function extraView(head) {
@@ -799,8 +890,8 @@ function extraView(head) {
       </div>
       <div class="cols"><div class="mainc">
         <div class="card"><h4><span class="kind">Needs you</span><a href="#today" class="link" style="font-size:13px;font-weight:500">${top.length < open.length ? `Top ${top.length} of ${open.length} · see all` : "See all"}</a></h4>
-        ${top.length ? top.map(t => `<div class="item"><span class="pill ${whenPill(t.when)}">${esc(t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)}</small>${t.key === "chase" ? '<div class="suggest"><b>Desk suggests:</b> nudge Arjun on WhatsApp now and escalate to Vikram at 4 pm.</div>' : t.key === "offer" ? '<div class="suggest"><b>Desk suggests:</b> fix the salary structure before sending; it fails the 50% wages check.</div>' : ""}</div><button class="btn${t.when === "Late" ? " primary" : ""}" type="button" data-v="task" data-key="${esc(t.key)}">Do it with Desk</button></div>`).join("") : '<div class="emptyv">All clear.</div>'}</div>
-        <div class="card"><h4><span class="kind">Recent activity</span></h4>${D.audit.length ? D.audit.slice(-4).reverse().map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} · ${fmtIST(a.at)}</small></div></div>`).join("") : '<div class="emptyv">Nothing approved yet today. Actions you take in Desk show up here.</div>'}</div>
+        ${top.length ? top.map(t => `<div class="item"><span class="pill ${whenPill(t.when)}">${esc(t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)}</small>${t.key === "chase" ? (D.done.chase ? `<div class="suggest"><b>Desk suggests:</b> Arjun was nudged; I'll escalate to Vikram at ${T.esc} if he stays silent.</div>` : `<div class="suggest"><b>Desk suggests:</b> nudge Arjun on WhatsApp now and escalate to Vikram at ${T.esc}.</div>`) : t.key === "offer" ? '<div class="suggest"><b>Desk suggests:</b> fix the salary structure before sending; it fails the 50% wages check.</div>' : ""}</div><button class="btn${t.when === "Late" ? " primary" : ""}" type="button" data-v="task" data-key="${esc(t.key)}">Do it with Desk</button></div>`).join("") : '<div class="emptyv">All clear.</div>'}</div>
+        <div class="card"><h4><span class="kind">Recent activity</span></h4>${D.audit.length ? D.audit.slice(-4).reverse().map(auditRow).join("") : '<div class="emptyv">Nothing approved yet today. Actions you take in Desk show up here.</div>'}</div>
       </div><div class="side">
         <div class="card"><h4><span class="kind">Coming up</span><a href="#interviews" class="link" style="font-size:13px;font-weight:500">Interviews</a></h4>${D.interviews.filter(i => i.confirmed !== undefined).map(i => `<div class="item"><div class="t">${esc(i.cand)}<small>${esc(i.when)} · ${esc(roleOf(i.role).title)}</small></div><span class="pill ${ivStatus(i)[0]}">${ivStatus(i)[1]}</span></div>`).join("")}</div>
         <div class="card"><h4><span class="kind">Pipeline</span><a href="#hiring" class="link" style="font-size:13px;font-weight:500">Jobs</a></h4><div class="bars">${["Applied", "Screened", "Interview", "Offer"].map(s => `<div><span>${s}</span><span class="b"><i style="width:${(stageTot(s) / max) * 100}%"></i></span><span>${stageTot(s)}</span></div>`).join("")}</div></div>
@@ -815,12 +906,12 @@ function extraView(head) {
       <div class="row">${task("chase").done ? "" : ask("Chase Arjun Mehta", "Chase late feedback with Desk", true)}${ask("Send Arjun Rao a confirmation for today's screen call", "Confirm Arjun Rao with Desk")}</div>`;
   }
   if (currentTab === "approvals") {
-    const seeded = task("faisalOffer") && !task("faisalOffer").done ? `<div class="item"><span class="pill p-warn">Waiting</span><div class="t">Offer letter · Faisal Khan, Customer Success Associate<small>Desk drafted · 5:40 pm IST · ₹5.4 L · salary check passed</small></div><button class="btn primary" type="button" data-v="task" data-key="faisalOffer">Review in Desk</button></div>` : "";
+    const seeded = task("faisalOffer") && !task("faisalOffer").done ? `<div class="item"><span class="pill p-warn">Waiting</span><div class="t">Offer letter · Faisal Khan, Customer Success Associate<small>Desk drafted · ${T.drafted} · ₹5.4 L · salary check passed</small></div><button class="btn primary" type="button" data-v="task" data-key="faisalOffer">Review in Desk</button></div>` : "";
     const pend = seeded || D.pending.length ? seeded + D.pending.map(p => `<div class="item"><span class="pill p-warn">Waiting</span><div class="t">${esc(p.what)}<small>Drafted by Ritu · also sent to ${esc(phoneLabel())} on WhatsApp</small></div><button class="btn primary" type="button" data-v="review" data-pid="${p.id}" data-what="${esc(p.what)}">Review in Desk</button></div>`).join("")
       : `<div class="emptyv">${mode === "solo" ? 'Nothing waiting. In Solo setup, what you approve in Desk goes out straight away. <button class="link" type="button" data-v="mode" data-mode="lead">Switch to Lead + juniors</button> to use the review queue.' : "Nothing waiting for your approval."}</div>`;
     return head("Approvals", "Nothing reaches a candidate or employee without a named approval") +
       `<div class="card"><h4><span class="kind">Waiting for ${esc(first())}</span></h4>${pend}</div>
-       <div class="card"><h4><span class="kind">Approval log</span></h4>${D.audit.length ? D.audit.map(a => `<div class="item"><span class="pill p-ok">Approved</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} · ${fmtIST(a.at)}</small></div></div>`).join("") : '<div class="emptyv">No approvals yet today.</div>'}</div>`;
+       <div class="card"><h4><span class="kind">Approval log</span></h4>${D.audit.length ? D.audit.slice().reverse().map(auditRow).join("") : '<div class="emptyv">No approvals yet today.</div>'}</div>`;
   }
   if (currentTab === "insights") {
     const sent = D.people.filter(p => p.stage === "Rejected").length;

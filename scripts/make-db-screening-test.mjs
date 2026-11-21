@@ -7,6 +7,7 @@ import { scoreCandidate, yearsFromRanges } from "../lib/screening.js";
 import { REQUIREMENTS } from "../seed/screening/requirements.js";
 
 const seed = JSON.parse(readFileSync(new URL("../seed/screening/seed-screening.json", import.meta.url)));
+const profiles = JSON.parse(readFileSync(new URL("../seed/screening/profiles.json", import.meta.url)));
 const q = s => "'" + String(s).replace(/'/g, "''") + "'";
 const j = o => q(JSON.stringify(o)) + "::jsonb";
 const asOf = new Date(Date.UTC(2026, 10, 11)); // demo day; the test pins the database to it with clearstage.as_of
@@ -39,22 +40,30 @@ for (const sql of [`insert into score(application_id, requirement_id, company_id
   L(`do $$ begin ${sql}; raise exception 'SHOULD HAVE FAILED';
 exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'blocked as expected: %', sqlerrm; end $$;`);
 }
+// QA-002: negative, fractional or wrong-total weights are refused by the database's check constraint
+for (const w of ['{"must":60,"experience":30,"nice":15,"conditions":-5}', '{"must":60.5,"experience":19.5,"nice":15,"conditions":5}', '{"must":60,"experience":20,"nice":15,"conditions":10}', '{"must":60,"experience":20,"nice":20}']) {
+  L(`do $$ begin perform desk_draft_requirements((select v::uuid from t_ids where k='role_be'), ${card(be)}, '${w}'::jsonb); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'blocked as expected: %', sqlerrm; end $$;`);
+}
 // parity on every seed CV
 let n = 0;
 for (const c of seed.cvs) {
   n++;
   const req = REQUIREMENTS[c.role]; const reqK = c.role === "Backend Developer" ? "req_be" : "req_ops"; const roleK = reqK === "req_be" ? "role_be" : "role_ops";
+  const profile = profiles.find(p => p.id === c.id);
   const ev = c.readable ? [...c.evidence, ...c.roles] : [];
-  const masked = ev.map(e => e.quote).join("\n");
+  // everything the honest model returned, including quotes that don't name a confirmed term (they become unverified claims)
+  const sent = c.readable ? profile.honest_evidence : [];
+  const masked = sent.map(e => e.quote).join("\n");
   const years = c.readable ? yearsFromRanges(c.roles.map(r => r.quote).join("\n"), asOf) : null;
-  const s = scoreCandidate(req, { readable: c.readable, evidence: c.evidence || [], years, referred: !!c.referred });
+  const s = scoreCandidate(req, { readable: c.readable, evidence: c.evidence || [], unverified: c.unverified || [], years, referred: !!c.referred });
   L(`insert into person(company_id, full_name) values ((current_member()).company_id, ${q(c.name + " #" + n)});`);
   L(`insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='${roleK}'), id from person where full_name = ${q(c.name + " #" + n)};`);
   L(`select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = ${q(c.name + " #" + n)}), (select v::uuid from t_ids where k='${reqK}'), 'cvs/${c.file}', ${q(c.file)}, '${c.sha256}', ${q(c.source)}, ${!!c.referred}) is not null;`);
   L(`select desk_claim_cv_job() is not null;`);
   // add one invented quote to every readable CV: the database must drop it
-  const evIn = c.readable ? [...ev, { requirement_id: "m1", quote: "Invented: expert in everything required", section: "Summary", confidence: "high" }] : [];
-  L(`select '${c.id} parity' as label, (r->>'fit') is not distinct from ${s.fit == null ? "null" : `'${s.fit}'`} and (r->>'stars') is not distinct from ${s.stars == null ? "null" : `'${s.stars}'`} and (r->>'under50')::boolean = ${s.under50}${c.readable ? " and (r->>'quotes_dropped')::int = 1" : ""} as ok, r
+  const evIn = c.readable ? [...sent, { requirement_id: "role", quote: "Invented role at Nowhere Ltd - 2001 - Present", section: "Experience", confidence: "high" }] : [];
+  L(`select '${c.id} parity' as label, (r->>'fit') is not distinct from ${s.fit == null ? "null" : `'${s.fit}'`} and (r->>'stars') is not distinct from ${s.stars == null ? "null" : `'${s.stars}'`} and (r->>'under50')::boolean = ${s.under50} and (r->>'safeguard')::boolean = ${!!s.safeguard}${c.readable ? ` and (r->>'quotes_dropped')::int = ${1 + sent.length - ev.length - (sent.length - new Set(sent.map(e => e.requirement_id + "|" + e.quote)).size)}` : ""} as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), ${c.readable}, ${q(masked)}, ${j(evIn)}) r) x \\gset p_`);
   L(`\\if :p_ok \\else \\echo 'PARITY FAILED ${c.id} expected fit ${s.fit} stars ${s.stars} under50 ${s.under50}:' :'p_r' \\\\ select (1/0) as parity_failed; \\endif`);
 }
@@ -65,8 +74,12 @@ L(`select desk_pin((select v::uuid from t_ids where k='role_be'), (x->>'applicat
 L(`do $$ begin perform desk_pin((select v::uuid from t_ids where k='role_be'), (desk_get_shortlist((select v::uuid from t_ids where k='role_be'))->7->>'application_id')::uuid); raise exception 'SHOULD HAVE FAILED';
 exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'blocked as expected: %', sqlerrm; end $$;`);
 L(`create temp table t_msg as select count(*) n from message;`);
-L(`select 'batch preview', jsonb_array_length(b->'people') = 8 and (b->>'preview_only')::boolean from (select desk_prepare_reject_batch((select v::uuid from t_ids where k='role_be')) b) x;`);
+L(`select 'batch preview', jsonb_array_length(b->'people') = ${seed.cvs.filter(c => c.role === "Backend Developer" && c.readable && (() => { const sc = scoreCandidate(REQUIREMENTS[c.role], { readable: true, evidence: c.evidence, unverified: c.unverified || [], years: yearsFromRanges(c.roles.map(r => r.quote).join("\n"), asOf), referred: !!c.referred }); return sc.under50; })()).length} and (b->>'preview_only')::boolean from (select desk_prepare_reject_batch((select v::uuid from t_ids where k='role_be')) b) x;`);
 L(`select 'no message queued by the batch', (select count(*) from message) = (select n from t_msg);`);
+L(`do $$ begin perform desk_override_stars((desk_get_shortlist((select v::uuid from t_ids where k='role_be'))->1->>'application_id')::uuid, 5, 'Weaker than the CV suggests'); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'blocked as expected (QA-013): %', sqlerrm; end $$;`);
+L(`select 'safeguard never in the closure batch', not exists (select 1 from jsonb_array_elements(desk_prepare_reject_batch((select v::uuid from t_ids where k='role_be'))->'people') x
+  join score s on s.application_id = (x->>'application_id')::uuid where s.safeguard);`);
 L(`select 'override needs a reason', desk_override_stars((desk_get_shortlist((select v::uuid from t_ids where k='role_be'))->0->>'application_id')::uuid, 4, 'Weaker than the CV suggests') ? 'to';`);
 L(`do $$ begin perform desk_override_stars((desk_get_shortlist((select v::uuid from t_ids where k='role_be'))->0->>'application_id')::uuid, 5, 'because'); raise exception 'SHOULD HAVE FAILED';
 exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'blocked as expected: %', sqlerrm; end $$;`);

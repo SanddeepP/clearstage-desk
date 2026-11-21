@@ -6,7 +6,7 @@ export const REQUIREMENTS = {
     id: "req-backend-developer", role: "Backend Developer", version: 1, confirmed: true,
     must: [
       { id: "m1", label: "Backend services in Go or Java", terms: ["Go", "Golang", "Java", "Spring Boot"] },
-      { id: "m2", label: "REST API design", terms: ["REST", "API", "APIs", "endpoints"] },
+      { id: "m2", label: "REST API design", terms: ["REST", "RESTful"] },
       { id: "m3", label: "SQL databases (PostgreSQL or MySQL)", terms: ["SQL", "PostgreSQL", "Postgres", "MySQL"] },
       { id: "m4", label: "Message queues (Kafka or RabbitMQ)", terms: ["Kafka", "RabbitMQ", "message queue", "SQS"] },
       { id: "m5", label: "Payments or fintech systems", terms: ["payment", "payments", "payouts", "fintech", "UPI", "lending", "wallet", "settlement"] },

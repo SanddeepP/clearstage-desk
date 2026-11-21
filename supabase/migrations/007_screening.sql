@@ -9,6 +9,12 @@
 --   * the rejection batch is a preview: preparing it creates no message at all.
 
 -- ---------- tables ----------
+-- QA-002 (CTO 16 Nov): each weight is a whole number from 0 to 100, and they add up to 100. Same rule as checkWeights().
+create or replace function scr_weights_ok(w jsonb) returns boolean language sql immutable as $$
+  select coalesce(bool_and(jsonb_typeof(w->k) = 'number' and (w->>k)::numeric = trunc((w->>k)::numeric) and (w->>k)::numeric between 0 and 100), false)
+     and coalesce((w->>'must')::numeric + (w->>'experience')::numeric + (w->>'nice')::numeric + (w->>'conditions')::numeric = 100, false)
+  from unnest(array['must','experience','nice','conditions']) k
+$$;
 create table if not exists requirement (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references company(id) on delete cascade,
@@ -26,7 +32,8 @@ create table if not exists requirement (
   created_at timestamptz not null default now(),
   unique (role_id, version),
   check (jsonb_array_length(must) between 1 and 8),
-  check ((weights->>'must')::int + (weights->>'experience')::int + (weights->>'nice')::int + (weights->>'conditions')::int = 100)
+  -- QA-002: each weight a whole number 0–100, and they add up to 100
+  constraint requirement_weights_valid check (scr_weights_ok(weights))
 );
 create table if not exists cv_file (
   id uuid primary key default gen_random_uuid(),
@@ -75,6 +82,7 @@ create table if not exists evidence (
   quote text not null check (array_length(regexp_split_to_array(btrim(quote), '\s+'), 1) <= 20),
   section text not null check (section in ('Summary','Experience','Skills','Projects','Education','Certifications','Other')),
   confidence text not null check (confidence in ('high','medium','low')),
+  verified boolean not null default true,   -- false: the AI claimed it but the quote failed the word-for-word check
   created_at timestamptz not null default now()
 );
 create index if not exists evidence_app on evidence (application_id, requirement_id);
@@ -88,6 +96,7 @@ create table if not exists score (
   must_met int, must_total int, coverage numeric, years numeric, exp_in_range boolean,
   nice_met int, nice_total int, cond_met int, cond_total int,
   fit int, stars int check (stars between 1 and 5), under50 boolean not null default false,
+  loose_coverage numeric, safeguard boolean not null default false,   -- QA-001
   override_stars int check (override_stars between 1 and 5), override_reason text, override_by uuid references member(id), override_at timestamptz,
   status text not null default 'new' check (status in ('new','contacted','rejected','withdrawn','moved_forward')),
   applied_at timestamptz not null,
@@ -103,6 +112,13 @@ create table if not exists shortlist_pin (
   primary key (role_id, application_id)
 );
 
+-- Re-runnable: columns and constraints added after the first draft of this file
+alter table evidence add column if not exists verified boolean not null default true;
+alter table score add column if not exists loose_coverage numeric;
+alter table score add column if not exists safeguard boolean not null default false;
+alter table requirement drop constraint if exists requirement_weights_valid;
+alter table requirement add constraint requirement_weights_valid check (scr_weights_ok(weights));
+
 -- ---------- row-level security: members read their company; writes go through the functions below ----------
 do $$ declare t text; begin
   foreach t in array array['requirement','cv_file','cv_job','evidence_cache','evidence','score','shortlist_pin'] loop
@@ -115,7 +131,22 @@ end $$;
 
 -- ---------- helpers ----------
 create or replace function scr_norm(s text) returns text language sql immutable as $$
-  select lower(btrim(regexp_replace(translate(coalesce(s,''), '‐‑‒–—―−‘’‛“”' || chr(160), '-------''''''"" '), '\s+', ' ', 'g')))
+  -- QA-006: "hy-<line break>phen" is joined to "hyphen" first, as in lib/evidence.js norm()
+  select lower(btrim(regexp_replace(translate(regexp_replace(coalesce(s,''), '([A-Za-z])[-‐' || chr(173) || ']\s*\r?\n\s*([A-Za-z])', '\1\2', 'g'),
+    '‐‑‒–—―−‘’‛“”' || chr(160), '-------''''''"" '), '\s+', ' ', 'g')))
+$$;
+
+-- QA-018: does the quote contain one of the item's confirmed terms (word boundaries, generic words excluded)?
+create or replace function scr_item_exists(r requirement, p_item text) returns boolean language sql immutable as $$
+  select exists (select 1 from jsonb_array_elements(r.must || r.nice || r.conditions) x where x->>'id' = p_item)
+$$;
+create or replace function scr_quote_names_term(r requirement, p_item text, p_quote text) returns boolean language sql immutable as $$
+  select exists (
+    select 1 from jsonb_array_elements(r.must || r.nice || r.conditions) x, jsonb_array_elements_text(coalesce(x->'terms', '[]')) t
+    where x->>'id' = p_item
+      and scr_norm(t) not in ('api','apis','backend','back end','software','development','developer','engineer','engineering','system','systems',
+                             'work','experience','skills','tech','technology','it','computer','data','team','projects','project')
+      and scr_norm(p_quote) ~ ('(^|[^a-z0-9])' || regexp_replace(scr_norm(t), '([.*+?^${}()|\[\]\\])', '\\\1', 'g') || '($|[^a-z0-9])'))
 $$;
 
 -- Years from dated role quotes ("Mar 2021 - Present"), overlaps merged. Same rule as lib/screening.js yearsFromRanges.
@@ -147,7 +178,7 @@ end $$;
 create or replace function scr_compute(p_app uuid, p_req uuid) returns score
 language plpgsql security definer set search_path = public as $$
 declare r requirement; f cv_file; sc score; w jsonb; has text[]; ids text[]; y numeric; raw numeric;
-        mt int; nt int; ct int; mm int; nm int; cm int; app application;
+        mt int; nt int; ct int; mm int; nm int; cm int; lm int; app application;
 begin
   select * into r from requirement where id = p_req;
   if r.confirmed_at is null then raise exception 'Confirm the requirements card before screening'; end if;
@@ -156,12 +187,12 @@ begin
   sc.application_id := p_app; sc.requirement_id := p_req; sc.company_id := r.company_id; sc.version := r.version;
   sc.applied_at := app.created_at; sc.scored_at := now(); sc.status := 'new';
   if f.readable is not true then
-    sc.readable := false; sc.label := 'needs a human look'; sc.under50 := false; return sc;
+    sc.readable := false; sc.label := 'needs a human look'; sc.under50 := false; sc.safeguard := false; return sc;
   end if;
   sc.readable := true;
-  select array_agg(distinct item_id) into has from evidence where application_id = p_app and requirement_id = p_req and confidence in ('high','medium') and item_id <> 'role';
+  select array_agg(distinct item_id) into has from evidence where application_id = p_app and requirement_id = p_req and verified and confidence in ('high','medium') and item_id <> 'role';
   has := coalesce(has, '{}');
-  select array_agg(quote) into ids from evidence where application_id = p_app and requirement_id = p_req and item_id = 'role';
+  select array_agg(quote) into ids from evidence where application_id = p_app and requirement_id = p_req and item_id = 'role' and verified;
   y := scr_years(ids, coalesce(nullif(current_setting('clearstage.as_of', true), '')::date, current_date));   -- tests pin the day
   mt := jsonb_array_length(r.must); nt := jsonb_array_length(r.nice); ct := jsonb_array_length(r.conditions);
   select count(*) into mm from jsonb_array_elements(r.must) x where x->>'id' = any(has);
@@ -175,7 +206,13 @@ begin
        + (case when nt = 0 then 1 else nm::numeric / nt end) * (w->>'nice')::int
        + (case when ct = 0 then 1 else cm::numeric / ct end) * (w->>'conditions')::int;
   sc.fit := floor(raw + 0.5);          -- JS Math.round (half up)
-  sc.under50 := mt >= 3 and not f.referred and not f.added_by_hand and sc.coverage < 0.5;
+  -- QA-001 safeguard: counting low-confidence and unverified claims too, would they reach 50%?
+  select count(*) into lm from jsonb_array_elements(r.must) x
+    where exists (select 1 from evidence e where e.application_id = p_app and e.requirement_id = p_req and e.item_id = x->>'id');
+  sc.loose_coverage := case when mt = 0 then 1 else lm::numeric / mt end;
+  sc.safeguard := mt >= 3 and not f.referred and not f.added_by_hand and sc.coverage < 0.5 and sc.loose_coverage >= 0.5;
+  sc.under50 := mt >= 3 and not f.referred and not f.added_by_hand and sc.coverage < 0.5 and not sc.safeguard;
+  if sc.safeguard then sc.label := 'needs a human look'; end if;
   sc.stars := case when sc.under50 then 1 when sc.fit >= 85 then 5 when sc.fit >= 70 then 4 when sc.fit >= 55 then 3 when sc.fit >= 40 then 2 else 1 end;
   return sc;
 end $$;
@@ -263,10 +300,11 @@ end $$;
 -- Save the worker's result: masked text, verified evidence; the database checks every quote and computes the score.
 create or replace function desk_save_screening(p_job bigint, p_readable boolean, p_masked_text text, p_evidence jsonb, p_cache_key text default null, p_model text default null, p_prompt_version text default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare me member := current_member(); j cv_job; f cv_file; e jsonb; sc score; kept int := 0; dropped int := 0; masked text;
+declare me member := current_member(); j cv_job; f cv_file; e jsonb; sc score; kept int := 0; dropped int := 0; masked text; r_req requirement;
 begin
   select * into j from cv_job where id = p_job and company_id = me.company_id;
   if j.id is null or j.status <> 'running' then raise exception 'Job not running'; end if;
+  select * into r_req from requirement where id = j.requirement_id;
   select * into f from cv_file where id = j.cv_file_id;
   update cv_file set readable = p_readable, masked_text = case when p_readable then p_masked_text end where id = f.id;
   delete from evidence where application_id = f.application_id and requirement_id = j.requirement_id;
@@ -274,10 +312,19 @@ begin
     masked := scr_norm(p_masked_text);
     for e in select * from jsonb_array_elements(coalesce(p_evidence, '[]')) loop
       -- word-for-word check against the stored masked text, here in the database
-      if position(scr_norm(e->>'quote') in masked) > 0 and array_length(regexp_split_to_array(btrim(e->>'quote'), '\s+'), 1) <= 20 then
+      -- and (QA-018) the quote must contain one of that requirement's confirmed terms; generic words never count alone
+      if position(scr_norm(e->>'quote') in masked) > 0 and array_length(regexp_split_to_array(btrim(e->>'quote'), '\s+'), 1) <= 20
+         and e->>'section' in ('Summary','Experience','Skills','Projects','Education','Certifications','Other') and e->>'confidence' in ('high','medium','low')
+         and ((e->>'requirement_id' = 'role' and e->>'quote' ~ '(19|20)\d\d') or scr_quote_names_term(r_req, e->>'requirement_id', e->>'quote')) then
         insert into evidence(company_id, application_id, requirement_id, item_id, quote, section, confidence)
           values (me.company_id, f.application_id, j.requirement_id, e->>'requirement_id', e->>'quote', e->>'section', e->>'confidence');
         kept := kept + 1;
+      elsif (e->>'requirement_id') <> 'role' and scr_item_exists(r_req, e->>'requirement_id') and e->>'section' in ('Summary','Experience','Skills','Projects','Education','Certifications','Other') and e->>'confidence' in ('high','medium','low') then
+        -- kept as an unverified claim (QA-001 safeguard), first 20 words only; never counts as evidence
+        insert into evidence(company_id, application_id, requirement_id, item_id, quote, section, confidence, verified)
+          values (me.company_id, f.application_id, j.requirement_id, e->>'requirement_id',
+                  array_to_string((regexp_split_to_array(btrim(e->>'quote'), '\s+'))[1:20], ' '), e->>'section', e->>'confidence', false);
+        dropped := dropped + 1;
       else dropped := dropped + 1; end if;
     end loop;
     if p_cache_key is not null then
@@ -291,9 +338,10 @@ begin
   insert into score values (sc.*) on conflict (application_id, requirement_id) do update set
     version = excluded.version, readable = excluded.readable, label = excluded.label, must_met = excluded.must_met, must_total = excluded.must_total,
     coverage = excluded.coverage, years = excluded.years, exp_in_range = excluded.exp_in_range, nice_met = excluded.nice_met, nice_total = excluded.nice_total,
-    cond_met = excluded.cond_met, cond_total = excluded.cond_total, fit = excluded.fit, stars = excluded.stars, under50 = excluded.under50, scored_at = now();
+    cond_met = excluded.cond_met, cond_total = excluded.cond_total, fit = excluded.fit, stars = excluded.stars, under50 = excluded.under50,
+    loose_coverage = excluded.loose_coverage, safeguard = excluded.safeguard, scored_at = now();
   update cv_job set status = case when p_readable then 'done' else 'needs_human' end, finished_at = now() where id = j.id;
-  return jsonb_build_object('fit', sc.fit, 'stars', sc.stars, 'under50', sc.under50, 'readable', p_readable, 'quotes_kept', kept, 'quotes_dropped', dropped);
+  return jsonb_build_object('fit', sc.fit, 'stars', sc.stars, 'under50', sc.under50, 'safeguard', sc.safeguard, 'readable', p_readable, 'quotes_kept', kept, 'quotes_dropped', dropped);
 end $$;
 create or replace function desk_cached_evidence(p_key text) returns jsonb
 language sql stable security definer set search_path = public as $$
@@ -309,7 +357,7 @@ language sql stable security definer set search_path = public as $$
       'coverage', s.coverage, 'years', s.years, 'version', s.version, 'applied_at', s.applied_at,
       'pinned', exists (select 1 from shortlist_pin sp where sp.role_id = p_role and sp.application_id = s.application_id)) x
     from score s join r on r.id = s.requirement_id join application a on a.id = s.application_id join person p on p.id = a.person_id
-    where s.status = 'new' and s.fit is not null and not s.under50 and (p_stars is null or coalesce(s.override_stars, s.stars) = any(p_stars))
+    where s.status = 'new' and s.fit is not null and not s.under50 and not s.safeguard and (p_stars is null or coalesce(s.override_stars, s.stars) = any(p_stars))
     order by s.fit desc, s.applied_at limit p_limit) y
 $$;
 create or replace function desk_explain_fit(p_application uuid) returns jsonb
@@ -324,10 +372,13 @@ create or replace function desk_override_stars(p_application uuid, p_stars int, 
 language plpgsql security definer set search_path = public as $$
 declare me member := current_member(); s score;
 begin
-  if p_reason not in ('Strong in interview or call','Relevant experience the CV doesn''t show','Referral vouched for skills','Evidence was misread','Weaker than the CV suggests') then
-    raise exception 'Pick a reason for the override'; end if;
   select * into s from score where application_id = p_application and company_id = me.company_id order by version desc limit 1;
   if s.application_id is null or s.fit is null then raise exception 'No score to override'; end if;
+  if p_stars = s.stars then raise exception 'That''s the same as the calculated stars'; end if;
+  -- QA-013: the reason must fit the direction of the change
+  if (p_stars > s.stars and p_reason not in ('Strong in interview or call','Relevant experience the CV doesn''t show','Referral vouched for skills','Evidence was misread'))
+     or (p_stars < s.stars and p_reason not in ('Weaker than the CV suggests','Weak in interview or call','Evidence was misread')) then
+    raise exception 'Pick a reason that fits the change'; end if;
   update score set override_stars = p_stars, override_reason = p_reason, override_by = me.id, override_at = now()
     where application_id = s.application_id and requirement_id = s.requirement_id;
   perform desk_log('stars_overridden', 'application', p_application, jsonb_build_object('from', s.stars, 'to', p_stars, 'reason', p_reason));

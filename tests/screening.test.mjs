@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as unpdf from "unpdf";
 import mammoth from "mammoth";
-import { scoreCandidate, yearsFromRanges, newShortlist, offerToShortlist, leaveShortlist, pin, starFilter, overrideStars, HUMAN_LOOK, MAX_PINS } from "../lib/screening.js";
+import { scoreCandidate, yearsFromRanges, newShortlist, offerToShortlist, leaveShortlist, pin, starFilter, overrideStars, HUMAN_LOOK, MAX_PINS, checkWeights, checkTerms, reasonsFor } from "../lib/screening.js";
 import { maskCv, leaks } from "../lib/mask.js";
-import { buildPrompt, verifyEvidence, cacheKey, sha256Hex } from "../lib/evidence.js";
+import { buildPrompt, verifyEvidence, cacheKey, sha256Hex, norm } from "../lib/evidence.js";
 import { cvText } from "../lib/cvtext.js";
 import { screenOne } from "../lib/pipeline.js";
 import { rejectionClock, addWorkingHours, nextSlot } from "../lib/clock.js";
@@ -185,11 +185,11 @@ test("seed: 30 Backend (8 strong, 10 middling, 8 below 50%, 2 scanned, 2 referra
   const count = b => be.filter(c => c.band === b).length;
   assert.equal(be.length, 30); assert.equal(seed.cvs.length - be.length, 10);
   assert.deepEqual([count("strong"), count("middling"), count("below"), count("unreadable"), count("referral")], [8, 10, 8, 2, 2]);
-  const sc = c => scoreCandidate(REQUIREMENTS[c.role], { readable: c.readable, evidence: c.evidence, years: c.readable ? yearsFromRanges(c.roles.map(r => r.quote).join("\n")) : null, referred: !!c.referred });
+  const sc = c => scoreCandidate(REQUIREMENTS[c.role], { readable: c.readable, evidence: c.evidence, unverified: c.unverified || [], years: c.readable ? yearsFromRanges(c.roles.map(r => r.quote).join("\n")) : null, referred: !!c.referred });
   for (const c of be) {
     const s = sc(c);
     if (c.band === "strong") assert.ok(s.stars >= 4, `${c.name} ${s.fit}`);
-    if (c.band === "below") { assert.equal(s.under50, true, c.name); assert.equal(s.stars, 1); }
+    if (c.band === "below") { assert.ok(s.under50 !== s.safeguard, c.name); assert.equal(s.stars, 1); }   // closure batch, or the QA-001 safeguard
     if (c.band === "middling") assert.ok(s.stars >= 2 && s.stars <= 3 && !s.under50, `${c.name} ${s.fit} ${s.stars}`);
     if (c.band === "referral") { assert.equal(s.under50, false); assert.ok(s.stars >= 1); }
     if (c.band === "unreadable") assert.equal(s.label, HUMAN_LOOK);
@@ -226,6 +226,8 @@ test("star filter uses the override, and an override needs a reason chip", () =>
   const a = { id: "a", score: { stars: 3 } }, b = { id: "b", score: { stars: 5 } };
   assert.deepEqual(starFilter([a, b], [4, 5]).map(c => c.id), ["b"]);
   assert.throws(() => overrideStars(a.score, 5, "because", "Ritu"), /reason/);
+  assert.throws(() => overrideStars(a.score, 4, "Weaker than the CV suggests", "Ritu"), /fits the change/, "QA-013: a downgrade reason can't justify an upgrade");
+  assert.ok(reasonsFor(3, 2).includes("Weaker than the CV suggests") && !reasonsFor(3, 4).includes("Weaker than the CV suggests"));
   a.score = overrideStars(a.score, 4, "Strong in interview or call", "Ritu");
   assert.equal(a.score.original_stars, 3); assert.deepEqual(starFilter([a, b], [4, 5]).map(c => c.id), ["a", "b"]);
 });
@@ -241,10 +243,62 @@ test("rejection clock counts working hours and pauses overnight and on Sunday", 
   assert.equal(addWorkingHours(ist(21, 18), 2), ist(23, 10), "Saturday 18:00 + 2 h skips Sunday");
   assert.equal(nextSlot(ist(16, 12)), ist(16, 17));
   assert.equal(rejectionClock(ist(16, 9), ist(16, 19)).usedHours, 10);
-  assert.equal(rejectionClock(ist(16, 9), ist(16, 19)).state, "nudged");
+  const at10 = rejectionClock(ist(16, 9), ist(16, 19));
+  assert.equal(at10.state, "due_soon"); assert.equal(at10.stateLabel, "Due soon");
+  assert.equal(rejectionClock(ist(16, 9), ist(16, 10)).state, "on_time");
+  const late = rejectionClock(ist(16, 9), ist(17, 12));
+  assert.equal(late.dueAt, ist(17, 11)); assert.equal(late.state, "late");
+  // QA-003: "review by" is the next batch slot from now when it comes before the due time, else the due time
+  const r = rejectionClock(ist(16, 9), ist(16, 10));
+  assert.equal(r.reviewBy, ist(16, 11));
+  // QA-005: public holidays pause the clock (Tue 24 Nov 2026 is a Telangana holiday)
+  assert.equal(addWorkingHours(ist(23, 18), 2), ist(25, 10), "Mon 18:00 + 2 h skips the holiday");
 });
 
 test("the screen-cv worker uses exactly the same screening code as the web app", () => {
   for (const f of ["screening", "mask", "evidence", "cvtext"])
     assert.equal(readFileSync(new URL(`../supabase/functions/_shared/screening/${f}.js`, import.meta.url), "utf8"), readFileSync(new URL(`../lib/${f}.js`, import.meta.url), "utf8"), f);
+});
+
+/* ---------- QA priority 1 and 2 (CTO rulings 16 Nov) ---------- */
+const scoreSeed = name => { const c = seed.cvs.find(x => x.name === name);
+  return scoreCandidate(REQUIREMENTS[c.role], { readable: true, evidence: c.evidence, unverified: c.unverified || [], years: yearsFromRanges(c.roles.map(r => r.quote).join("\n")), referred: !!c.referred }); };
+
+for (const name of ["Nandini Das", "Gaurav Sethi", "Lavanya Reddy", "Rakesh Yadav", "Irfan Sheikh"]) {
+  test(`QA-001 safeguard: ${name} goes to "needs a human look", never the closure batch`, () => {
+    const s = scoreSeed(name);
+    assert.ok(s.coverage < 0.5, "verified coverage is below 50%");
+    assert.ok(s.looseCoverage >= 0.5, "counting low-confidence and unverified quotes reaches 50%");
+    assert.equal(s.safeguard, true); assert.equal(s.under50, false); assert.equal(s.label, HUMAN_LOOK);
+  });
+}
+test("QA-001: candidates below 50% even with every claim counted still go to the closure batch", () => {
+  for (const name of ["Swati Mishra", "Preeti Chawla", "Sunil Pandey", "Mohit Arora", "Himanshu Jain", "Juhi Agarwal"]) {
+    const s = scoreSeed(name); assert.equal(s.under50, true, name); assert.equal(s.safeguard, false, name);
+  }
+});
+test("QA-001: an unverified claim alone can lift a candidate into the safeguard, never into a pass", () => {
+  const s = scoreCandidate(BE, { readable: true, years: 4, evidence: ev(["m1"]), unverified: ["m2", "m3"] });
+  assert.equal(s.mustMet, 1); assert.equal(s.safeguard, true); assert.equal(s.under50, false);
+  const verify = verifyEvidence({ evidence: [{ requirement_id: "m4", quote: "Ran Kafka at scale for years", section: "Experience", confidence: "high" }] }, "Nothing relevant here.", BE);
+  assert.deepEqual(verify.unverified, ["m4"]);
+});
+test("QA-002: weights must be whole numbers from 0 to 100 that add up to 100", () => {
+  assert.throws(() => checkWeights({ must: 60, experience: 30, nice: 15, conditions: -5 }), /Job conditions weight must be a whole number from 0 to 100/);
+  assert.throws(() => checkWeights({ must: 60.5, experience: 19.5, nice: 15, conditions: 5 }), /whole number/);
+  assert.throws(() => checkWeights({ must: 60, experience: 20, nice: 15, conditions: 10 }), /add up to 100 \(now 105\)/);
+  assert.throws(() => scoreCandidate({ ...BE, weights: { must: 60, experience: 30, nice: 15, conditions: -5 } }, { readable: true, evidence: [] }), /whole number/);
+  assert.deepEqual(checkWeights({ must: 100, experience: 0, nice: 0, conditions: 0 }), { must: 100, experience: 0, nice: 0, conditions: 0 });
+});
+test("QA-006: a word hyphenated at a line end matches the joined word", () => {
+  assert.equal(norm("Built settle-\nment services"), norm("Built settlement services"));
+  const cv = "Built REST APIs for pay-\nment reconciliation in Go.";
+  assert.equal(verifyEvidence({ evidence: [{ requirement_id: "m5", quote: "payment reconciliation", section: "Experience", confidence: "high" }] }, cv, BE).evidence.length, 1);
+});
+test("QA-018: only confirmed terms count; 'APIs' alone no longer counts as REST; generic-only terms are refused", () => {
+  const cv = "Built internal APIs for the collections dashboard.";
+  const v = verifyEvidence({ evidence: [{ requirement_id: "m2", quote: "Built internal APIs for the collections dashboard.", section: "Experience", confidence: "high" }] }, cv, BE);
+  assert.equal(v.evidence.length, 0); assert.deepEqual(v.unverified, ["m2"]);
+  assert.throws(() => checkTerms({ ...BE, must: [{ id: "m1", label: "APIs", terms: ["API", "backend"] }] }), /specific word/);
+  assert.doesNotThrow(() => checkTerms(BE));
 });

@@ -25,10 +25,12 @@ for (const p of profiles) {
   if (t.readable) {
     const masked = maskCv(t.text, [p.name]).text;
     const v = verifyEvidence({ evidence: p.honest_evidence }, masked, req);
-    const lost = v.dropped.filter(d => d.item);
+    // A prepared quote that isn't in the extracted CV text means extraction broke: stop. A quote that is in the CV
+    // but doesn't use a confirmed term (QA-018) is kept as an unverified claim, as live AI output would be.
+    const lost = v.dropped.filter(d => d.item && d.why !== "quote doesn't mention the requirement");
     if (lost.length) { problems++; console.error(p.file, "prepared quotes that fail verification:", lost); }
     entry.cache_key = cacheKey(sha, req);
-    entry.evidence = v.evidence; entry.roles = v.roles;
+    entry.evidence = v.evidence; entry.roles = v.roles; entry.unverified = v.unverified;
   } else if (p.format !== "scan") { problems++; console.error(p.file, "should be readable:", t.reason); }
   out.cvs.push(entry);
 }

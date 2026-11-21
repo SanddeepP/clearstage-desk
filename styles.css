@@ -259,7 +259,6 @@ td:last-child{font-family:var(--mono);font-size:13px}
 /* Pencil: Desk drafted, nobody approved yet */
 .card.draft{border:1.5px dashed var(--pencil);background:var(--pencil-ground);transition:border-color .2s,background .2s}
 .card.draft > h4{border-bottom-style:dashed;border-bottom-color:var(--line-strong)}
-.card.draft > h4 .kind::before{content:"Desk drafted · "}
 .card.draft .kind,.card.draft .why,.card.draft .note{color:var(--pencil-label)}
 .doc{border:1px dashed var(--pencil);background:var(--surface)}
 /* Ink: approved by a named person */
@@ -325,3 +324,15 @@ td:last-child{font-family:var(--mono);font-size:13px}
 .card h4 .role{display:inline-flex;gap:4px;align-items:center;margin-left:auto;flex-wrap:wrap}
 .toolbar .role{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}
 @media (max-width:760px){.reqgrid{grid-template-columns:1fr}}
+
+/* QA-019: salary panel inside a dashed offer is solid (computed, not drafted) */
+.ctcpanel{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius-md);padding:var(--space-3)}
+.replaced{color:var(--ink-3);font-style:italic}
+.card h4 [data-undo]{margin-left:8px}
+.late-text{color:var(--late)}
+.terms{display:block;font:var(--type-caption);color:var(--ink-3)}
+.terms input{width:100%;margin-top:2px;font:var(--type-caption)}
+.rolesused{margin:4px 0 0 18px;padding:0}
+
+/* Sign-in: note after "Resend code" (20 Nov, code-only sign-in) */
+#resentNote{margin:0;font-size:13px;color:var(--muted)}
