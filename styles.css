@@ -336,3 +336,8 @@ td:last-child{font-family:var(--mono);font-size:13px}
 
 /* Sign-in: note after "Resend code" (20 Nov, code-only sign-in) */
 #resentNote{margin:0;font-size:13px;color:var(--muted)}
+
+/* Founder 21 Nov: the sample-data banner is always visible after sign-in, on every screen and at phone width */
+.sampleban{position:sticky;top:0;z-index:30;background:var(--warn-bg);color:var(--warn);font-size:13px;line-height:1.4;text-align:center;
+  padding-block:6px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));border-bottom:1px solid var(--line)}
+.sampleban b{font-weight:600}
