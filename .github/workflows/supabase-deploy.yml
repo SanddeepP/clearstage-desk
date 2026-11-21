@@ -1,0 +1,71 @@
+# Applies migrations and deploys Edge Functions to the live Supabase project through the CLI (CTO Tech Decisions §4).
+# Run by hand only (Actions → "supabase deploy" → Run workflow). Secrets stay in GitHub: SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD.
+#   mode=plan  : changes nothing. Shows the remote migration history, a dry run of `db push`, and the live functions' settings.
+#   mode=apply : optionally marks already-applied migrations as applied (repair), pushes pending migrations, then deploys
+#                screen-cv and desk in the same run, so the database and the functions never disagree.
+# This repo is public, so the run log is too: nothing here prints data or secrets (GitHub masks secrets in logs).
+name: supabase deploy
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (no changes) or apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      repair_applied:
+        description: "apply only: space-separated versions already applied by hand, to record as applied without running (e.g. 001 002 003 004 005 006)"
+        required: false
+        default: ""
+      verify_jwt:
+        description: "apply only: deploy functions with JWT verification at the gateway (match what plan shows for desk)"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+concurrency: { group: supabase-deploy, cancel-in-progress: false }
+permissions: { contents: read }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: yqqzhtxuriqzajzlwryq
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Check secrets are present
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::SUPABASE_ACCESS_TOKEN secret is missing"; exit 1; }
+          test -n "$SUPABASE_DB_PASSWORD" || { echo "::error::SUPABASE_DB_PASSWORD secret is missing"; exit 1; }
+          supabase --version
+      - name: Link the project
+        run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Remote migration history
+        run: supabase migration list --password "$SUPABASE_DB_PASSWORD"
+      - name: Live functions (name, version, verify_jwt)
+        run: |
+          curl -sf -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF/functions" \
+            | jq -r '.[] | "\(.slug)  version=\(.version)  verify_jwt=\(.verify_jwt)  status=\(.status)  updated=\(.updated_at)"'
+      - name: Dry run of db push
+        run: supabase db push --dry-run --include-all --password "$SUPABASE_DB_PASSWORD"
+      - name: Record hand-applied migrations as applied
+        if: inputs.mode == 'apply' && inputs.repair_applied != ''
+        run: supabase migration repair --status applied ${{ inputs.repair_applied }} --password "$SUPABASE_DB_PASSWORD"
+      - name: Apply pending migrations
+        if: inputs.mode == 'apply'
+        run: |
+          supabase db push --dry-run --include-all --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --include-all --password "$SUPABASE_DB_PASSWORD"
+          supabase migration list --password "$SUPABASE_DB_PASSWORD"
+      - name: Deploy screen-cv and desk
+        if: inputs.mode == 'apply'
+        run: |
+          flag=""; [ "${{ inputs.verify_jwt }}" = "false" ] && flag="--no-verify-jwt"
+          supabase functions deploy screen-cv --project-ref "$PROJECT_REF" $flag
+          supabase functions deploy desk --project-ref "$PROJECT_REF" $flag
+          curl -sf -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF/functions" \
+            | jq -r '.[] | "\(.slug)  version=\(.version)  verify_jwt=\(.verify_jwt)  status=\(.status)  updated=\(.updated_at)"'
