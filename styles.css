@@ -325,3 +325,6 @@ td:last-child{font-family:var(--mono);font-size:13px}
 .card h4 .role{display:inline-flex;gap:4px;align-items:center;margin-left:auto;flex-wrap:wrap}
 .toolbar .role{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}
 @media (max-width:760px){.reqgrid{grid-template-columns:1fr}}
+
+/* Sign-in: note after "Resend code" (20 Nov, code-only sign-in) */
+#resentNote{margin:0;font-size:13px;color:var(--muted)}
