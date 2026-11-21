@@ -19,6 +19,10 @@ on:
         description: "apply only: space-separated versions already applied by hand, to record as applied without running (e.g. 001 002 003 004 005 006)"
         required: false
         default: ""
+      expect_only:
+        description: "apply only: the exact migration files the dry run must list before anything is pushed (e.g. 007_screening.sql 008_statutory_rules.sql)"
+        required: false
+        default: ""
       verify_jwt:
         description: "apply only: deploy functions with JWT verification at the gateway (match what plan shows for desk)"
         required: true
@@ -59,7 +63,12 @@ jobs:
       - name: Apply pending migrations
         if: inputs.mode == 'apply'
         run: |
-          supabase db push --remote --dry-run --include-all
+          out=$(supabase db push --remote --dry-run --include-all 2>&1); echo "$out"
+          got=$(echo "$out" | grep -o '[0-9]\{3\}_[a-z0-9_]*\.sql' | sort -u | tr '\n' ' ' | sed 's/ $//')
+          want=$(echo "${{ inputs.expect_only }}" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')
+          if [ -z "$want" ]; then echo "::error::Set expect_only to the migrations you expect to push"; exit 1; fi
+          if [ "$got" != "$want" ]; then echo "::error::Dry run would push [$got] but expect_only is [$want]. Nothing pushed."; exit 1; fi
+          echo "Guard passed: pushing exactly [$got]"
           supabase db push --remote --yes --include-all
           supabase migration list --remote
       - name: Deploy screen-cv and desk
