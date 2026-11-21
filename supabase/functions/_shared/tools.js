@@ -2,7 +2,7 @@
 // Every executor returns { result, cards } — `result` goes back to the model, `cards` go to the app.
 // The model can never approve or send: desk_approve / desk_discard are only reachable from a person's tap
 // (see handleAction in agent.js). Money and law maths is plain code (ctc.js), never the model.
-import { checkWagesRule, fixStructure, formatINR, WAGES_RULE } from "./ctc.js";
+import { formatINR, WAGES_RULE, PF_CITATION } from "./ctc.js";
 
 export const REJECT_REASONS = ["skills_gap", "assessment_below_bar", "experience_mismatch", "salary_mismatch",
   "location_mismatch", "notice_period", "role_filled", "no_show", "withdrew"];
@@ -29,10 +29,15 @@ export const TOOL_DEFS = [
   { name: "record_feedback", description: "Save interview feedback (e.g. turned from a WhatsApp reply) as a scorecard.", input_schema: { type: "object", properties: {
       application_id: uuid("Application id"), scores: { type: "object", additionalProperties: { type: "integer", minimum: 1, maximum: 5 } },
       recommendation: { type: "string", enum: ["next_round", "hire", "reject", "hold"] }, raw_text: str("The interviewer's words") }, required: ["application_id", "scores", "recommendation"] } },
-  { name: "calculate_ctc", description: "Check an offer's salary structure against the 50% wages rule with fixed code (never estimate it yourself), and save it as a draft offer. Set fix=true to rebalance into basic pay without changing CTC.", input_schema: { type: "object", properties: {
-      application_id: uuid("Application id of the candidate"), fix: { type: "boolean" },
-      components: { type: "array", items: { type: "object", properties: { name: { type: "string" }, kind: { type: "string", enum: ["basic", "da", "retaining", "hra", "special", "conveyance", "bonus", "other", "employer_pf", "employer_esi", "gratuity"] }, amount: { type: "integer", description: "Rupees per year" } }, required: ["name", "kind", "amount"] } },
-      joining_on: str("YYYY-MM-DD if known") }, required: ["application_id", "components"] } },
+  { name: "calculate_ctc", description: "Build and check an offer's salary structure from INPUTS ONLY, and save it as a draft offer. Never send rupee amounts for components: the database builds every line (Basic, HRA, Special, PF, ESI, gratuity) with fixed rules and checks the 50% wages rule. Set fix=true to raise Basic until wages reach 51%, keeping CTC the same.", input_schema: { type: "object", additionalProperties: false, properties: {
+      application_id: uuid("Application id of the candidate"),
+      ctc: { type: "integer", minimum: 1, description: "Total CTC in rupees per year, as the user said it (e.g. 1200000 for ₹12 L)" },
+      basic_monthly: { type: "integer", minimum: 1, description: "Basic pay per month in rupees, only if the user gave it. Leave out to use the company default (40% of CTC)." },
+      hra_pct: { type: "integer", minimum: 0, maximum: 100, description: "HRA as a % of Basic. Default 40." },
+      pf_rule: { type: "string", enum: ["ceiling", "full"], description: "ceiling = 12% of Basic up to the PF wage ceiling (default); full = 12% of full Basic" },
+      variable: { type: "integer", minimum: 0, description: "Variable pay at target, rupees per year. Default 0." },
+      joining_on: str("YYYY-MM-DD if known (the rules in force on that date apply)"),
+      fix: { type: "boolean", description: "true to fix a failing structure" } }, required: ["application_id", "ctc"] } },
   { name: "send_offer", description: "Ask for approval to send a saved offer. It goes out only when a person approves. Refused if the wages check fails.", input_schema: { type: "object", properties: { offer_id: uuid("Offer id from calculate_ctc"), summary: str("e.g. \"Kiran's offer, ₹12 L\"") }, required: ["offer_id", "summary"] } },
   { name: "draft_document", description: "Draft a letter (appointment, confirmation, extension, offer letter) for a person. Creates a draft and asks for approval; nothing is sent.", input_schema: { type: "object", properties: {
       person_id: uuid("Person id"), kind: { type: "string", enum: ["appointment_letter", "confirmation_letter", "probation_extension", "offer_letter"] }, details: str("Facts to include: role, dates, CTC, notice period") }, required: ["person_id", "kind", "details"] } },
@@ -115,20 +120,23 @@ export function makeExecutors({ rpc, draft }) {
       return { result: r, cards: [{ type: "scorecard", scores: a.scores, recommendation: a.recommendation, raw_text: a.raw_text ?? null, application_id: a.application_id }] };
     },
     async calculate_ctc(a) {
-      const comps = a.fix ? fixStructure(a.components) : a.components;
-      const mine = checkWagesRule(comps);           // plain code; only used to sanity-check the database's answer
-      const saved = await rpc("desk_save_offer", { p_application: a.application_id, p_components: comps, p_ctc: mine.ctc,
-        p_check: null, p_joining: a.joining_on ?? null });
-      // C5: the card shows the database's own check (migration 005), one source of truth.
+      // Inputs only (CTO ruling 21 Nov, §4.1.2): whatever else the model sends is dropped here, and the database refuses amounts too.
+      const inputs = { ctc: a.ctc };
+      for (const k of ["basic_monthly", "hra_pct", "pf_rule", "variable", "joining_on"]) if (a[k] != null) inputs[k] = a[k];
+      const saved = await rpc("desk_save_offer", { p_application: a.application_id, p_inputs: inputs, p_fix: a.fix === true });
+      // C5: the card shows the database's own lines and check, one source of truth.
       const db = saved.check;
-      if (!db || db.computed_by !== "database") throw new Error("The salary check didn't come back from the database. Nothing was changed.");
+      if (!db || db.computed_by !== "database" || !Array.isArray(saved.components)) throw new Error("The salary check didn't come back from the database. Nothing was changed.");
       const check = { passes: db.passes === true, wagesPercent: Number(db.wages_percent), ctc: Number(db.ctc), deemedExtraWages: Number(db.deemed_extra_wages) };
       return { result: { offer_id: saved.offer_id, passes: check.passes, wages_percent: check.wagesPercent, ctc: check.ctc, deemed_extra_wages: check.deemedExtraWages,
-          instruction: check.passes ? "Offer saved as a draft. Use send_offer to ask for approval." : "Fails the 50% wages rule. Offer to fix it (calculate_ctc with fix=true)." },
-        cards: [{ type: "offer", offer_id: saved.offer_id, components: comps.map(c => ({ name: c.name, amount: c.amount, display: formatINR(c.amount) })),
+          basic_monthly: saved.inputs?.basic_monthly ?? null, warnings: saved.warnings ?? [],
+          instruction: check.passes ? "Offer saved as a draft. Use send_offer to ask for approval." : "Fails the 50% wages rule. Offer to fix it (calculate_ctc with fix=true and the same inputs)." },
+        cards: [{ type: "offer", offer_id: saved.offer_id, components: saved.components.map(c => ({ name: c.name, amount: c.amount, display: formatINR(c.amount) })),
           ctc: check.ctc, ctc_display: formatINR(check.ctc), passes: check.passes, wages_percent: check.wagesPercent, computed_by: "database",
+          take_home_monthly: saved.monthly?.take_home ?? null, warnings: saved.warnings ?? [],
           note: check.passes ? "Meets the 50% wages rule." : `${formatINR(check.deemedExtraWages)} would count as wages for PF and gratuity.`,
-          citation: WAGES_RULE.citation, status: WAGES_RULE.status, legal: "Calculated by the database's fixed rules, not AI. Not legal advice." }] };
+          citation: WAGES_RULE.citation, pf_citation: saved.pf_citation ?? PF_CITATION, status: WAGES_RULE.status,
+          legal: "Calculated by the database's fixed rules, not AI. Not legal advice." }] };
     },
     async send_offer({ offer_id, summary }) {
       const ap = await rpc("desk_request_approval", { p_subject_type: "offer", p_subject_id: offer_id, p_summary: summary });

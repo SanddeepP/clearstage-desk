@@ -1,5 +1,5 @@
 import * as auth from "./auth.js";
-import { checkWagesRule, fixStructure, formatINR } from "./lib/ctc.js";
+import { ctcBreakup, fixBasic, formatINR, PF_CITATION } from "./lib/ctc.js";
 import { parseHire, fmtBudget } from "./lib/intent.js";
 import { createScreening } from "./screening-demo.js";
 import { demoDates } from "./lib/demodate.js";
@@ -495,23 +495,23 @@ function openCandidate(name) {
   const p = person(name); say(`<b>${esc(name)}</b> · ${esc(roleOf(p.role)?.title || "")} · ${esc(p.stage)}: ${esc(p.where)}. Owner: ${esc(ownerName(p.owner))}.`);
 }
 
-const KIRAN = [
-  { name: "Basic + DA", kind: "basic", amount: 420000 }, { name: "HRA", kind: "hra", amount: 210000 },
-  { name: "Special allowance", kind: "special", amount: 510000 }, { name: "Employer PF", kind: "employer_pf", amount: 60000 }];
-function ctcBlock(comps) {
-  const r = checkWagesRule(comps);
-  return `<div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${comps.map(c => `<tr><td>${esc(c.name)}</td><td>${formatINR(c.amount).slice(1)}</td></tr>`).join("")}<tr class="total"><td>CTC</td><td>${formatINR(r.ctc).slice(1)}</td></tr></table></div>
+// Offers are built from inputs only (CTO ruling 21 Nov): the same calculator as the database (migration 008).
+// Kiran: Desk's first draft, Basic ₹35,000 a month, fails at 35.6% for the "Fix the structure" scene.
+const KIRAN = { ctc: 1200000, basicMonthly: 35000, hraPct: 40, pfRule: "ceiling" };
+function ctcBlock(b) {
+  const r = b.check;
+  return `<div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${b.components.map(c => `<tr><td>${esc(c.name)}</td><td>${formatINR(c.amount).slice(1)}</td></tr>`).join("")}<tr class="total"><td>CTC</td><td>${formatINR(r.ctc).slice(1)}</td></tr></table></div>
   <div class="row"><span class="pill ${r.passes ? "p-ok" : "p-late"}">Wages ${r.wagesPercent}% of pay</span><span class="note">${r.passes ? "Meets the 50% wages rule." : `Allowances are above half of pay. ${formatINR(r.deemedExtraWages)} would count as wages for PF and gratuity.`}</span></div>
-  <div class="why">Calculated by fixed rules, not AI. Rule: ${esc(r.rule.citation)}. Status: ${esc(r.rule.status)}. Not legal advice.</div>`;
+  <div class="note">Take-home about ${formatINR(b.monthly.takeHome)} a month, before income tax.</div>
+  <div class="why">Calculated by fixed rules, not AI. Rule: ${esc(r.rule.citation)}. ${esc(PF_CITATION)} Not legal advice.</div>`;
 }
 // Sample: an offer letter Desk has already prepared, waiting for a named approval. The salary check passes.
-const FAISAL = [
-  { name: "Basic + DA", kind: "basic", amount: 270000 }, { name: "HRA", kind: "hra", amount: 108000 },
-  { name: "Special allowance", kind: "special", amount: 140400 }, { name: "Employer PF", kind: "employer_pf", amount: 21600 }];
+// Faisal: Basic ₹22,500 a month is under the ₹25,000 PF ceiling, so PF is 12% of full basic. Passes at 51.2%.
+const FAISAL = { ctc: 540000, basicMonthly: 22500, hraPct: 40, pfRule: "ceiling" };
 function faisalOffer() {
   if (task("faisalOffer").done) return say("Faisal's offer letter is already approved.");
   later(() => desk(`<div class="bubble">Faisal Khan's offer letter is ready. I prepared it at ${T.drafted} from the approved Customer Success Associate role. Nothing has been sent.</div>
-  <div class="card ctc"><h4><span class="kind">Salary check</span>Faisal Khan · Customer Success Associate <span class="pill p-ok">Check passed</span></h4><div class="c">${ctcBlock(FAISAL)}</div></div>
+  <div class="card ctc"><h4><span class="kind">Salary check</span>Faisal Khan · Customer Success Associate <span class="pill p-ok">Check passed</span></h4><div class="c">${ctcBlock(ctcBreakup(FAISAL))}</div></div>
   <div class="card draft"><h4><span class="kind">Desk drafted</span>Offer letter · Faisal Khan <span class="pill p-warn">Waiting for ${esc(first())}</span></h4><div class="c">
   <div class="doc">Dear Faisal,
 We are pleased to offer you the role of Customer Success Associate at Acme Fintech Pvt Ltd, Hyderabad.
@@ -529,14 +529,15 @@ function offer() {
   if (D.done.offerSent) return say("Kiran's offer has already gone out.");
   later(() => desk(`<div class="bubble">Kiran's offer at ₹12 L. I checked the structure before anything goes out.</div>
   <div class="card draft" data-subject="kiran-offer"><h4><span class="kind">Desk drafted</span>Offer · Kiran S. · Backend Developer <span class="pill p-late">Check failed</span></h4><div class="c">
-  <div class="ctcpanel">${ctcBlock(KIRAN)}</div>
+  <div class="ctcpanel">${ctcBlock(ctcBreakup(KIRAN))}</div>
   <div class="row"><button class="btn primary" type="button" data-a="fixCtc" data-once>Fix the structure for me</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
 }
 ACT.fixCtc = () => {
   // a newer draft: the older card is marked "Replaced by a newer draft" and its buttons stop working
-  desk(`<div class="bubble">Fixed: Basic + DA is now 50% of pay. CTC is unchanged.</div>
+  const kf = fixBasic(KIRAN);
+  desk(`<div class="bubble">Fixed: Basic is now ${formatINR(kf.inputs.basicMonthly)} a month, so wages are ${kf.check.wagesPercent}% of pay. CTC is unchanged.</div>
   <div class="card draft" data-subject="kiran-offer"><h4><span class="kind">Desk drafted</span>Offer · Kiran S. · Backend Developer <span class="pill p-ok">Check passed</span></h4><div class="c">
-  <div class="ctcpanel">${ctcBlock(fixStructure(KIRAN))}</div>
+  <div class="ctcpanel">${ctcBlock(kf)}</div>
   <div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve and send offer</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div>
   <div class="note">Nothing is sent until you approve it.</div></div></div>`);
 };

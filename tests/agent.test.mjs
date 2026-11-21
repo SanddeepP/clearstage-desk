@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runTurn, handleAction } from "../supabase/functions/_shared/agent.js";
 import { TOOL_DEFS, blockedText } from "../supabase/functions/_shared/tools.js";
-import { checkWagesRule } from "../lib/ctc.js";
+import { ctcBreakup, fixBasic } from "../lib/ctc.js";
 
 // A scripted model: returns the queued responses in order and records what it was asked.
 function scriptedLLM(responses) {
@@ -21,7 +21,12 @@ function fakeEngine(overrides = {}) {
     desk_find_people: [{ kind: "member", id: "m1", name: "Arjun Mehta", detail: "Engineering Manager" }, { kind: "person", id: "p1", name: "Arjun Rao", detail: "Customer Success Associate · Screened" }],
     desk_create_role: { role_id: "role-9", approval: { task_id: "x", approver: "Sanddeep", self: true } },
     // like migration 005/006: the database ignores the client's flag and returns its own check
-    desk_save_offer: args => { const c = checkWagesRule(args.p_components); return { offer_id: "offer-1", ctc: c.ctc, check: { passes: c.passes, wages_percent: c.wagesPercent, ctc: c.ctc, deemed_extra_wages: c.deemedExtraWages, computed_by: "database" } }; },
+    desk_save_offer: args => {   // mirrors migration 008: inputs in, every line and the check out
+      if (Object.keys(args.p_inputs).some(k => !["ctc", "basic_monthly", "hra_pct", "pf_rule", "variable", "joining_on"].includes(k))) throw new Error("Offer inputs can't include amounts");
+      const i = args.p_inputs, inp = { ctc: i.ctc, basicMonthly: i.basic_monthly ?? Math.floor(i.ctc * 0.4 / 12 / 1000) * 1000, hraPct: i.hra_pct ?? 40, pfRule: i.pf_rule ?? "ceiling", variable: i.variable ?? 0, on: "2026-12-01" };
+      const r = args.p_fix ? fixBasic(inp) : ctcBreakup(inp), c = r.check;
+      return { offer_id: "offer-1", ctc: c.ctc, components: r.components, monthly: { take_home: r.monthly.takeHome }, warnings: r.warnings, inputs: { basic_monthly: r.inputs.basicMonthly },
+        check: { passes: c.passes, wages_percent: c.wagesPercent, ctc: c.ctc, deemed_extra_wages: c.deemedExtraWages, computed_by: "database" } }; },
     desk_request_approval: { task_id: "y", approver: "Sanddeep", self: true },
     desk_chase_owner: { chased: "Arjun Mehta", escalates_to: "Vikram" },
     desk_month_tokens: 0,
@@ -68,18 +73,36 @@ test("ask, don't guess: two Arjuns produce a choice card", async () => {
   assert.equal(out.cards[0].options.length, 2);
 });
 
-test("CTC is computed by code, not the model: Kiran's ₹12 L fails, fix passes", async () => {
-  const comps = [{ name: "Basic + DA", kind: "basic", amount: 420000 }, { name: "HRA", kind: "hra", amount: 210000 }, { name: "Special allowance", kind: "special", amount: 510000 }, { name: "Employer PF", kind: "employer_pf", amount: 60000 }];
-  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", components: comps }), say("It fails the 50% rule. Want me to fix it?"),
-                               toolUse("calculate_ctc", { application_id: "a1", components: comps, fix: true }), say("Fixed.")]);
+test("CTC is computed by the database from inputs only: Kiran's ₹12 L fails at 35.6%, Fix passes at 51.2%", async () => {
+  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", ctc: 1200000, basic_monthly: 35000 }), say("It fails the 50% rule. Want me to fix it?"),
+                               toolUse("calculate_ctc", { application_id: "a1", ctc: 1200000, basic_monthly: 35000, fix: true }), say("Fixed.")]);
   const eng = fakeEngine();
   const first = await runTurn({ text: "Build Kiran's offer", deps: deps(llm, eng.rpc) });
-  assert.equal(first.cards[0].passes, false); assert.equal(first.cards[0].wages_percent, 36.8);
+  assert.equal(first.cards[0].passes, false); assert.equal(first.cards[0].wages_percent, 35.6);
+  assert.equal(first.cards[0].components.find(c => c.name === "Employer PF").amount, 36000);
   const second = await runTurn({ text: "Fix it", deps: deps(llm, eng.rpc) });
-  assert.equal(second.cards[0].passes, true); assert.equal(second.cards[0].ctc, 1200000);
+  assert.equal(second.cards[0].passes, true); assert.equal(second.cards[0].ctc, 1200000); assert.equal(second.cards[0].wages_percent, 51.2);
+  assert.equal(second.cards[0].take_home_monthly, 91396);
   const saved = eng.calls.filter(c => c.name === "desk_save_offer");
-  assert.equal(saved[1].args.p_check, null, "the client sends no verdict; the database computes it");
+  assert.equal(saved[1].args.p_fix, true);
+  assert.ok(saved.every(c => !("p_components" in c.args) && !("p_check" in c.args)), "the model sends no amounts and no verdict");
   assert.equal(second.cards[0].computed_by, "database");
+  assert.match(second.cards[0].pf_citation, /S\.O\. 5109\(E\)/);
+});
+
+test("amounts the model slips in are dropped before reaching the database", async () => {
+  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", ctc: 1200000, components: [{ name: "Basic", kind: "basic", amount: 1200000 }], basic: 100000 }), say("Saved.")]);
+  const eng = fakeEngine();
+  await runTurn({ text: "offer", deps: deps(llm, eng.rpc) });
+  const call = eng.calls.find(c => c.name === "desk_save_offer");
+  assert.deepEqual(Object.keys(call.args.p_inputs), ["ctc"]);
+});
+
+test("the calculate_ctc schema has no amount fields", () => {
+  const t = TOOL_DEFS.find(x => x.name === "calculate_ctc");
+  assert.equal(t.input_schema.additionalProperties, false);
+  assert.ok(!("components" in t.input_schema.properties));
+  assert.deepEqual(t.input_schema.required, ["application_id", "ctc"]);
 });
 
 test("bulk reject: protected trait in the note is refused before reaching the engine", async () => {
@@ -134,18 +157,18 @@ test("approve only happens through a person's action", async () => {
 
 test("the Edge Function's CTC module is identical to the web app's", () => {
   assert.equal(readFileSync(new URL("../supabase/functions/_shared/ctc.js", import.meta.url), "utf8"), readFileSync(new URL("../lib/ctc.js", import.meta.url), "utf8"));
+  assert.equal(readFileSync(new URL("../supabase/functions/_shared/rules.js", import.meta.url), "utf8"), readFileSync(new URL("../lib/rules.js", import.meta.url), "utf8"));
 });
 
 test("C5: the salary card shows the database's check even if it disagrees with the Edge Function", async () => {
-  const comps = [{ name: "Basic + DA", kind: "basic", amount: 600000 }, { name: "Special allowance", kind: "special", amount: 600000 }];
-  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", components: comps }), say("Done.")]);
-  const eng = fakeEngine({ desk_save_offer: { offer_id: "o9", ctc: 1200000, check: { passes: false, wages_percent: 49.9, ctc: 1200000, deemed_extra_wages: 100, computed_by: "database" } } });
+  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", ctc: 1200000, basic_monthly: 50000 }), say("Done.")]);
+  const eng = fakeEngine({ desk_save_offer: { offer_id: "o9", ctc: 1200000, components: [{ name: "Basic + DA", kind: "basic", amount: 600000 }], check: { passes: false, wages_percent: 49.9, ctc: 1200000, deemed_extra_wages: 100, computed_by: "database" } } });
   const out = await runTurn({ text: "offer", deps: deps(llm, eng.rpc) });
   assert.equal(out.cards[0].passes, false); assert.equal(out.cards[0].wages_percent, 49.9);
 });
 
 test("C5: no database check, no card", async () => {
-  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", components: [{ name: "Basic", kind: "basic", amount: 1 }] }), say("Couldn't save.")]);
+  const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", ctc: 1200000 }), say("Couldn't save.")]);
   const out = await runTurn({ text: "offer", deps: deps(llm, fakeEngine({ desk_save_offer: { offer_id: "o9" } }).rpc) });
   assert.equal(out.cards.length, 0);
 });

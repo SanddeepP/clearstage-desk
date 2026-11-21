@@ -23,10 +23,14 @@ select 'allow-listed company on', desk_live_enabled() = true;
 -- other companies still off
 set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
 select 'other company still off', desk_live_enabled() = false;
--- C5: the client's verdict is ignored and the database's check comes back
+-- C5: the database's own check comes back. Since 008 Desk sends inputs only, so there is no client verdict to ignore.
+-- Kiran's draft (CTO 21 Nov): Basic 4,20,000 · HRA 1,68,000 · Special 5,55,808 · Employer PF 36,000 · Gratuity 20,192 = 35.6%, a fail
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000001';
-select 'c5 returns db check', (r->'check'->>'computed_by') = 'database' and (r->'check'->>'passes')::boolean = false and (r->'check'->>'wages_percent')::numeric = 36.8
-from (select desk_save_offer((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Kiran S.' and a.company_id = (current_member()).company_id),
-  '[{"name":"Basic + DA","kind":"basic","amount":420000},{"name":"HRA","kind":"hra","amount":210000},{"name":"Special allowance","kind":"special","amount":510000},{"name":"Employer PF","kind":"employer_pf","amount":60000}]',
-  1, '{"passes":true}') r) s;
+do $$ declare r jsonb; begin
+  r := desk_save_offer((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Kiran S.' and a.company_id = (current_member()).company_id),
+    '{"ctc":1200000,"basic_monthly":35000,"hra_pct":40,"pf_rule":"ceiling"}');
+  if not ((r->'check'->>'computed_by') = 'database' and (r->'check'->>'passes')::boolean = false and (r->'check'->>'wages_percent')::numeric = 35.6
+          and (select (c->>'amount')::int from jsonb_array_elements(r->'components') c where c->>'kind' = 'employer_pf') = 36000)
+  then raise exception 'FAILED: c5 returns db check %', r; end if;
+end $$;
 select 'ALLOW-LIST AND C5 CHECKS PASSED';

@@ -3,73 +3,19 @@
 // supabase/functions/desk/index.ts
 import { createClient } from "npm:@supabase/supabase-js@2.50.0";
 
+// supabase/functions/_shared/rules.js
+var RULE_STATUS = "awaiting legal review";
+
 // supabase/functions/_shared/ctc.js
 var WAGES_RULE = {
   id: "code-on-wages-50",
-  citation: "Code on Wages, 2019, section 2(y): excluded payments above one-half of total remuneration count as wages",
-  status: "awaiting legal review",
-  threshold: 0.5
+  citation: "Code on Wages, 2019, s.2(y): payments outside wages above one-half of total remuneration count as wages. Employer PF counts in total remuneration; gratuity and employer ESI are left out",
+  status: RULE_STATUS,
+  threshold: 0.5,
+  fixTarget: 0.51
+  // "Fix the structure" stops at 51%, a 1-point margin (CTO §4.1.3)
 };
-var WAGE_KINDS = /* @__PURE__ */ new Set(["basic", "da", "retaining"]);
-var EMPLOYER_KINDS = /* @__PURE__ */ new Set(["employer_pf", "employer_esi", "gratuity"]);
-function rupees(n) {
-  if (!Number.isFinite(n) || n < 0) throw new Error("Amounts must be zero or more rupees");
-  return Math.round(n);
-}
-function checkWagesRule(components) {
-  if (!Array.isArray(components) || components.length === 0) throw new Error("Add at least one CTC component");
-  let ctc = 0, wages = 0, employer = 0;
-  for (const c of components) {
-    const amt = rupees(c.amount);
-    ctc += amt;
-    if (WAGE_KINDS.has(c.kind)) wages += amt;
-    else if (EMPLOYER_KINDS.has(c.kind)) employer += amt;
-  }
-  const remuneration = ctc - employer;
-  if (remuneration <= 0) throw new Error("CTC has no pay to the employee");
-  const excluded = remuneration - wages;
-  const limit = Math.floor(remuneration * WAGES_RULE.threshold);
-  const excess = Math.max(0, excluded - limit);
-  const share = wages / remuneration;
-  return {
-    ctc,
-    remuneration,
-    wages,
-    excluded,
-    employer,
-    wagesShare: share,
-    wagesPercent: Math.round(share * 1e3) / 10,
-    passes: excess === 0,
-    deemedExtraWages: excess,
-    // amount that would count as wages for PF and gratuity
-    rule: WAGES_RULE
-  };
-}
-function fixStructure(components) {
-  const res = checkWagesRule(components);
-  if (res.passes) return components.map((c) => ({ ...c }));
-  const out = components.map((c) => ({ ...c, amount: rupees(c.amount) }));
-  const target = Math.ceil(res.remuneration * WAGES_RULE.threshold / 1e3) * 1e3;
-  let need = target - res.wages;
-  let basic = out.find((c) => c.kind === "basic");
-  if (!basic) {
-    basic = { name: "Basic", kind: "basic", amount: 0 };
-    out.unshift(basic);
-  }
-  const donors = ["special", "other", "conveyance", "hra", "bonus"];
-  for (const kind of donors) {
-    for (const c of out) {
-      if (need <= 0) break;
-      if (c.kind !== kind) continue;
-      const take = Math.min(c.amount, need);
-      c.amount -= take;
-      basic.amount += take;
-      need -= take;
-    }
-  }
-  if (need > 0) throw new Error("Not enough allowances to move into basic pay");
-  return out.filter((c) => c.amount > 0 || c.kind === "basic");
-}
+var PF_CITATION = "PF: 12% \xD7 min(PF wages, \u20B925,000) \u2014 Code on Social Security, 2020; EPF Scheme; S.O. 5109(E), 17 Sep 2026. Awaiting legal review.";
 function formatINR(n) {
   return "\u20B9" + Math.round(n).toLocaleString("en-IN");
 }
@@ -120,12 +66,16 @@ var TOOL_DEFS = [
     recommendation: { type: "string", enum: ["next_round", "hire", "reject", "hold"] },
     raw_text: str("The interviewer's words")
   }, required: ["application_id", "scores", "recommendation"] } },
-  { name: "calculate_ctc", description: "Check an offer's salary structure against the 50% wages rule with fixed code (never estimate it yourself), and save it as a draft offer. Set fix=true to rebalance into basic pay without changing CTC.", input_schema: { type: "object", properties: {
+  { name: "calculate_ctc", description: "Build and check an offer's salary structure from INPUTS ONLY, and save it as a draft offer. Never send rupee amounts for components: the database builds every line (Basic, HRA, Special, PF, ESI, gratuity) with fixed rules and checks the 50% wages rule. Set fix=true to raise Basic until wages reach 51%, keeping CTC the same.", input_schema: { type: "object", additionalProperties: false, properties: {
     application_id: uuid("Application id of the candidate"),
-    fix: { type: "boolean" },
-    components: { type: "array", items: { type: "object", properties: { name: { type: "string" }, kind: { type: "string", enum: ["basic", "da", "retaining", "hra", "special", "conveyance", "bonus", "other", "employer_pf", "employer_esi", "gratuity"] }, amount: { type: "integer", description: "Rupees per year" } }, required: ["name", "kind", "amount"] } },
-    joining_on: str("YYYY-MM-DD if known")
-  }, required: ["application_id", "components"] } },
+    ctc: { type: "integer", minimum: 1, description: "Total CTC in rupees per year, as the user said it (e.g. 1200000 for \u20B912 L)" },
+    basic_monthly: { type: "integer", minimum: 1, description: "Basic pay per month in rupees, only if the user gave it. Leave out to use the company default (40% of CTC)." },
+    hra_pct: { type: "integer", minimum: 0, maximum: 100, description: "HRA as a % of Basic. Default 40." },
+    pf_rule: { type: "string", enum: ["ceiling", "full"], description: "ceiling = 12% of Basic up to the PF wage ceiling (default); full = 12% of full Basic" },
+    variable: { type: "integer", minimum: 0, description: "Variable pay at target, rupees per year. Default 0." },
+    joining_on: str("YYYY-MM-DD if known (the rules in force on that date apply)"),
+    fix: { type: "boolean", description: "true to fix a failing structure" }
+  }, required: ["application_id", "ctc"] } },
   { name: "send_offer", description: "Ask for approval to send a saved offer. It goes out only when a person approves. Refused if the wages check fails.", input_schema: { type: "object", properties: { offer_id: uuid("Offer id from calculate_ctc"), summary: str(`e.g. "Kiran's offer, \u20B912 L"`) }, required: ["offer_id", "summary"] } },
   { name: "draft_document", description: "Draft a letter (appointment, confirmation, extension, offer letter) for a person. Creates a draft and asks for approval; nothing is sent.", input_schema: { type: "object", properties: {
     person_id: uuid("Person id"),
@@ -139,7 +89,23 @@ var TOOL_DEFS = [
     person_ids: { type: "array", items: { type: "string", format: "uuid" } },
     reason: { type: "string", enum: REJECT_REASONS },
     note: str("Message to each candidate. Use {name} for their first name. Polite, specific to the job, no protected traits.")
-  }, required: ["role_id", "person_ids", "reason", "note"] } }
+  }, required: ["role_id", "person_ids", "reason", "note"] } },
+  // ---- Screening (PM brief 15 Nov; CTO Tech Decisions §1.3). The model never sees or writes a score, star, coverage or rank:
+  // these tools return what the database computed. Confirming requirements and overriding stars are a person's taps, not tools.
+  { name: "set_requirements", description: "Draft the requirements card for a role from its job description: 3-8 must-have skills, nice-to-haves, an experience range and job conditions (location, notice period, shift). Job-relevant only: never age, gender, college, religion, caste or marital status. Creates a draft the recruiter must confirm; screening can't start before that.", input_schema: { type: "object", properties: {
+    role_id: uuid("Role id from show_pipeline"),
+    must: { type: "array", items: { type: "object", properties: { label: str("Skill or requirement"), terms: { type: "array", items: { type: "string" }, description: "Synonyms that count" } }, required: ["label"] }, minItems: 1, maxItems: 8 },
+    nice: { type: "array", items: { type: "object", properties: { label: str("Nice-to-have"), terms: { type: "array", items: { type: "string" } } }, required: ["label"] } },
+    conditions: { type: "array", items: { type: "object", properties: { label: str("Job condition"), terms: { type: "array", items: { type: "string" } } }, required: ["label"] } },
+    exp_min: { type: "number" },
+    exp_max: { type: "number" }
+  }, required: ["role_id", "must", "exp_min", "exp_max"] } },
+  { name: "get_shortlist", description: "The live top 10 to call for a role (ranked by the database's fit score; pinned people first). Optional star filter, e.g. [4,5].", input_schema: { type: "object", properties: {
+    role_id: uuid("Role id"),
+    stars: { type: "array", items: { type: "integer", minimum: 1, maximum: 5 } }
+  }, required: ["role_id"] } },
+  { name: "explain_fit", description: "Why a candidate was shortlisted: the stored score breakdown, CV quotes for each matched must-have, gaps, and the requirements version. Use for 'why is X in the top 10'.", input_schema: { type: "object", properties: { application_id: uuid("Application id") }, required: ["application_id"] } },
+  { name: "prepare_reject_batch", description: "Preview the rejection batch for a role: candidates below 50% of must-haves (referrals, people added by hand and unreadable CVs are never included), with the missing skills and one draft note. Preview only: nothing is sent or queued; a person approves the batch.", input_schema: { type: "object", properties: { role_id: uuid("Role id") }, required: ["role_id"] } }
 ];
 var L = 1e5;
 var bucketPill = (b) => b === "Late" ? "late" : b === "Today" ? "warn" : "info";
@@ -229,17 +195,11 @@ function makeExecutors({ rpc, draft }) {
       return { result: r, cards: [{ type: "scorecard", scores: a.scores, recommendation: a.recommendation, raw_text: a.raw_text ?? null, application_id: a.application_id }] };
     },
     async calculate_ctc(a) {
-      const comps = a.fix ? fixStructure(a.components) : a.components;
-      const mine = checkWagesRule(comps);
-      const saved = await rpc("desk_save_offer", {
-        p_application: a.application_id,
-        p_components: comps,
-        p_ctc: mine.ctc,
-        p_check: null,
-        p_joining: a.joining_on ?? null
-      });
+      const inputs = { ctc: a.ctc };
+      for (const k of ["basic_monthly", "hra_pct", "pf_rule", "variable", "joining_on"]) if (a[k] != null) inputs[k] = a[k];
+      const saved = await rpc("desk_save_offer", { p_application: a.application_id, p_inputs: inputs, p_fix: a.fix === true });
       const db = saved.check;
-      if (!db || db.computed_by !== "database") throw new Error("The salary check didn't come back from the database. Nothing was changed.");
+      if (!db || db.computed_by !== "database" || !Array.isArray(saved.components)) throw new Error("The salary check didn't come back from the database. Nothing was changed.");
       const check = { passes: db.passes === true, wagesPercent: Number(db.wages_percent), ctc: Number(db.ctc), deemedExtraWages: Number(db.deemed_extra_wages) };
       return {
         result: {
@@ -248,19 +208,24 @@ function makeExecutors({ rpc, draft }) {
           wages_percent: check.wagesPercent,
           ctc: check.ctc,
           deemed_extra_wages: check.deemedExtraWages,
-          instruction: check.passes ? "Offer saved as a draft. Use send_offer to ask for approval." : "Fails the 50% wages rule. Offer to fix it (calculate_ctc with fix=true)."
+          basic_monthly: saved.inputs?.basic_monthly ?? null,
+          warnings: saved.warnings ?? [],
+          instruction: check.passes ? "Offer saved as a draft. Use send_offer to ask for approval." : "Fails the 50% wages rule. Offer to fix it (calculate_ctc with fix=true and the same inputs)."
         },
         cards: [{
           type: "offer",
           offer_id: saved.offer_id,
-          components: comps.map((c) => ({ name: c.name, amount: c.amount, display: formatINR(c.amount) })),
+          components: saved.components.map((c) => ({ name: c.name, amount: c.amount, display: formatINR(c.amount) })),
           ctc: check.ctc,
           ctc_display: formatINR(check.ctc),
           passes: check.passes,
           wages_percent: check.wagesPercent,
           computed_by: "database",
+          take_home_monthly: saved.monthly?.take_home ?? null,
+          warnings: saved.warnings ?? [],
           note: check.passes ? "Meets the 50% wages rule." : `${formatINR(check.deemedExtraWages)} would count as wages for PF and gratuity.`,
           citation: WAGES_RULE.citation,
+          pf_citation: saved.pf_citation ?? PF_CITATION,
           status: WAGES_RULE.status,
           legal: "Calculated by the database's fixed rules, not AI. Not legal advice."
         }]
@@ -291,6 +256,70 @@ function makeExecutors({ rpc, draft }) {
     async start_probation_review({ person_id }) {
       const r = await rpc("desk_start_probation_review", { p_person: person_id });
       return { result: r, cards: [] };
+    },
+    async set_requirements(a) {
+      const lists = [a.must, a.nice || [], a.conditions || []].map((l) => l.map((x) => x.label)).flat().join(" ");
+      const bad = blockedText(lists);
+      if (bad) throw new Error(`Requirements must be job-relevant; "${bad}" can't be used`);
+      const ids = (arr, p) => (arr || []).map((x, i) => ({ id: p + (i + 1), label: x.label, terms: x.terms || [] }));
+      const card = { must: ids(a.must, "m"), nice: ids(a.nice, "n"), conditions: ids(a.conditions, "c") };
+      const r = await rpc("desk_draft_requirements", { p_role: a.role_id, p_must: card.must, p_nice: card.nice, p_conditions: card.conditions, p_exp_min: a.exp_min, p_exp_max: a.exp_max });
+      return {
+        result: { requirement_id: r.requirement_id, version: r.version, status: "draft: waiting for the recruiter to confirm" },
+        cards: [{
+          type: "requirements",
+          requirement_id: r.requirement_id,
+          version: r.version,
+          ...card,
+          experience: { min: a.exp_min, max: a.exp_max },
+          weights: { must: 60, experience: 20, nice: 15, conditions: 5 },
+          confirmed: false,
+          actions: [{ label: "Confirm requirements", action: "confirm_requirements", params: { requirement_id: r.requirement_id } }]
+        }]
+      };
+    },
+    async get_shortlist(a) {
+      const rows = await rpc("desk_get_shortlist", { p_role: a.role_id, p_stars: a.stars?.length ? a.stars : null, p_limit: 10 });
+      return {
+        result: { count: rows.length, names_in_order: rows.map((r) => r.name) },
+        cards: [{ type: "shortlist", role_id: a.role_id, stars_filter: a.stars || null, rows: rows.map((r) => ({ application_id: r.application_id, name: r.name, fit: r.fit, stars: r.stars, years: r.years, pinned: r.pinned, version: r.version })) }]
+      };
+    },
+    async explain_fit(a) {
+      const x = await rpc("desk_explain_fit", { p_application: a.application_id });
+      if (!x) throw new Error("No screening result for that application yet");
+      const has = new Set(x.evidence.filter((e) => e.confidence !== "low" && e.item !== "role").map((e) => e.item));
+      const gaps = x.requirements.must.filter((m) => !has.has(m.id)).map((m) => m.label);
+      return {
+        result: { matched: x.requirements.must.filter((m) => has.has(m.id)).map((m) => m.label), gaps, version: x.requirements.version },
+        cards: [{
+          type: "why_shortlisted",
+          application_id: a.application_id,
+          score: x.score,
+          evidence: x.evidence.filter((e) => e.item !== "role"),
+          gaps,
+          requirements: x.requirements,
+          note: "Desk found the evidence; the score is calculated by fixed rules. A person makes every decision."
+        }]
+      };
+    },
+    async prepare_reject_batch(a) {
+      const b = await rpc("desk_prepare_reject_batch", { p_role: a.role_id });
+      return {
+        result: { count: b.people.length, preview_only: true },
+        cards: [{
+          type: "bulk_preview",
+          preview_only: true,
+          batch_id: b.batch_id,
+          count: b.people.length,
+          reason: "skills_gap",
+          note: b.note,
+          people: b.people,
+          oldest_application: b.oldest_application,
+          clock: "12 working hours (09:00-19:00 IST, Mon-Sat)",
+          actions: [{ label: "Approve and send", action: "approve_reject_batch_preview", params: { batch_id: b.batch_id, role_id: a.role_id } }]
+        }]
+      };
     },
     async bulk_reject(a) {
       if (!REJECT_REASONS.includes(a.reason)) return { result: { error: "Use a job-relevant reason from the list" }, cards: [] };
@@ -388,6 +417,23 @@ async function handleAction({ action, params = {}, rpc }) {
     const r = await rpc("desk_undo", { p_event: params.event });
     return { reply: `Undone. Back to ${r.stage}.`, cards: [] };
   }
+  if (action === "confirm_requirements") {
+    const r = await rpc("desk_confirm_requirements", { p_requirement: params.requirement_id });
+    return { reply: `Requirements v${r.version} confirmed by ${r.confirmed_by}. Screening can start.`, cards: [], approved_by: r.confirmed_by, approved_at: r.confirmed_at };
+  }
+  if (action === "override_stars") {
+    const r = await rpc("desk_override_stars", { p_application: params.application_id, p_stars: params.stars, p_reason: params.reason });
+    return { reply: `Stars changed from ${r.from} to ${r.to}. Both are kept in the log.`, cards: [] };
+  }
+  if (action === "pin") {
+    const r = await rpc("desk_pin", { p_role: params.role_id, p_application: params.application_id, p_pin: params.pin !== false });
+    return { reply: r.pinned ? "Pinned to the top 10." : "Unpinned.", cards: [] };
+  }
+  if (action === "mark_contacted") {
+    await rpc("desk_mark_contacted", { p_application: params.application_id, p_status: params.status || "contacted" });
+    return { reply: "Marked as contacted. The next best person moves into the top 10.", cards: [] };
+  }
+  if (action === "approve_reject_batch_preview") return { reply: "Approved. This is a preview: nothing was sent and no message was queued.", cards: [] };
   if (action === "load_sample_data") {
     await rpc("desk_load_sample_data");
     return { reply: "Sample data loaded: 3 roles, 26 candidates, a joiner and a probation review.", cards: [] };

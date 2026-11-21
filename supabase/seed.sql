@@ -46,7 +46,9 @@ begin
 
   insert into person(company_id, full_name) values (co, 'Kiran S.') returning id into p;
   insert into application(company_id, role_id, person_id, stage) values (co, r_backend, p, 'Offer') returning id into a;
-  -- Deliberately fails the 50% wages check
+  -- Deliberately fails the 50% wages check (CTO 21 Nov): Basic 4,20,000 · HRA 1,68,000 · Special 5,55,808 · Employer PF 36,000
+  -- · Gratuity 20,192 = 12,00,000, wages 35.6%. Written as the old component list so it loads before 008; migration 008
+  -- moves this exact draft to inputs and the database rebuilds every line.
   insert into offer(company_id, application_id, ctc, components, status) values (co, a, 1200000,
     '[{"name":"Basic + DA","kind":"basic","amount":420000},{"name":"HRA","kind":"hra","amount":210000},{"name":"Special allowance","kind":"special","amount":510000},{"name":"Employer PF","kind":"employer_pf","amount":60000}]', 'draft');
 
