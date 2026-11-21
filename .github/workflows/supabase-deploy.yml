@@ -1,3 +1,4 @@
+# Supabase CLI 3.x: --remote targets the linked project; the DB password comes from SUPABASE_DB_PASSWORD.
 # Applies migrations and deploys Edge Functions to the live Supabase project through the CLI (CTO Tech Decisions §4).
 # Run by hand only (Actions → "supabase deploy" → Run workflow). Secrets stay in GitHub: SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD.
 #   mode=plan  : changes nothing. Shows the remote migration history, a dry run of `db push`, and the live functions' settings.
@@ -43,29 +44,29 @@ jobs:
           test -n "$SUPABASE_DB_PASSWORD" || { echo "::error::SUPABASE_DB_PASSWORD secret is missing"; exit 1; }
           supabase --version
       - name: Link the project
-        run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+        run: supabase link --project-ref "$PROJECT_REF"
       - name: Remote migration history
-        run: supabase migration list --password "$SUPABASE_DB_PASSWORD"
+        run: supabase migration list --remote
       - name: Live functions (name, version, verify_jwt)
         run: |
           curl -sf -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF/functions" \
             | jq -r '.[] | "\(.slug)  version=\(.version)  verify_jwt=\(.verify_jwt)  status=\(.status)  updated=\(.updated_at)"'
       - name: Dry run of db push
-        run: supabase db push --dry-run --include-all --password "$SUPABASE_DB_PASSWORD"
+        run: supabase db push --remote --dry-run --include-all
       - name: Record hand-applied migrations as applied
         if: inputs.mode == 'apply' && inputs.repair_applied != ''
-        run: supabase migration repair --status applied ${{ inputs.repair_applied }} --password "$SUPABASE_DB_PASSWORD"
+        run: supabase migration repair --remote --yes --status applied ${{ inputs.repair_applied }}
       - name: Apply pending migrations
         if: inputs.mode == 'apply'
         run: |
-          supabase db push --dry-run --include-all --password "$SUPABASE_DB_PASSWORD"
-          supabase db push --include-all --password "$SUPABASE_DB_PASSWORD"
-          supabase migration list --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --remote --dry-run --include-all
+          supabase db push --remote --yes --include-all
+          supabase migration list --remote
       - name: Deploy screen-cv and desk
         if: inputs.mode == 'apply'
         run: |
           flag=""; [ "${{ inputs.verify_jwt }}" = "false" ] && flag="--no-verify-jwt"
-          supabase functions deploy screen-cv --project-ref "$PROJECT_REF" $flag
-          supabase functions deploy desk --project-ref "$PROJECT_REF" $flag
+          supabase functions deploy screen-cv --use-api --yes $flag
+          supabase functions deploy desk --use-api --yes $flag
           curl -sf -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF/functions" \
             | jq -r '.[] | "\(.slug)  version=\(.version)  verify_jwt=\(.verify_jwt)  status=\(.status)  updated=\(.updated_at)"'
