@@ -118,21 +118,24 @@ export function createScreening(api) {
     const card = api.desk(`<div class="card"><h4><span class="kind">Screening queue</span>${esc(title)} · ${jobs.length} CV${jobs.length > 1 ? "s" : ""}</h4><div class="c">
       <div class="qbar" role="progressbar" aria-label="CVs screened" aria-valuemin="0" aria-valuemax="${jobs.length}" aria-valuenow="0"><i style="width:0%"></i></div>
       <div class="note" data-q>Queued ${jobs.length} · one CV at a time</div>
-      <div class="why">Each CV is read (PDF or DOCX), personal details are removed, then evidence is matched. Demo: evidence comes from the cache for the 40 sample CVs, so no AI call is made and nothing leaves this browser. CVs outside the sample set stay blocked ("needs the live AI") until the India route is live.</div></div></div>`);
-    const t0 = performance.now(); const done = { scored: 0, human: 0, needsAi: 0, dup: 0 };
+      <div class="why">Each CV is read (PDF or DOCX), personal details are removed, then evidence is matched. Demo: evidence comes from the cache for the 40 sample CVs, so no AI call is made and nothing leaves this browser. A CV outside the sample set is blocked: it is not read or kept ("needs the live AI", until the India route is live).</div></div></div>`);
+    const t0 = performance.now(); const done = { scored: 0, human: 0, blocked: 0, otherRole: 0, dup: 0 }, blockedNames = [];
     const sd = await seed();
     for (let i = 0; i < jobs.length; i++) {
       const j = jobs[i];
       const out = await screenFile(j, title, r, sd, L);
-      done[out]++;
+      done[out]++; if (out === "blocked") blockedNames.push(j.name);
       card.querySelector(".qbar i").style.width = `${((i + 1) / jobs.length) * 100}%`;
       card.querySelector(".qbar").setAttribute("aria-valuenow", i + 1);
-      card.querySelector("[data-q]").textContent = `Screened ${i + 1} of ${jobs.length} · ${done.scored} scored · ${done.human} need a human look${done.needsAi ? ` · ${done.needsAi} need the live AI` : ""}${done.dup ? ` · ${done.dup} already screened` : ""}`;
+      card.querySelector("[data-q]").textContent = `Screened ${i + 1} of ${jobs.length} · ${done.scored} scored · ${done.human} need a human look${done.blocked ? ` · ${done.blocked} blocked (not a sample CV)` : ""}${done.otherRole ? ` · ${done.otherRole} for another role` : ""}${done.dup ? ` · ${done.dup} already screened` : ""}`;
       api.paint(); if (["hiring", "people", "overview"].includes(api.tab())) api.renderTab();
       await new Promise(res => setTimeout(res, 60));
     }
     const secs = Math.max(1, Math.round((performance.now() - t0) / 1000));
-    card.querySelector("[data-q]").textContent = `Done in ${secs} s · ${done.scored} scored · ${done.human} need a human look${done.needsAi ? ` · ${done.needsAi} need the live AI` : ""}${done.dup ? ` · ${done.dup} already screened` : ""}`;
+    card.querySelector("[data-q]").textContent = `Done in ${secs} s · ${done.scored} scored · ${done.human} need a human look${done.blocked ? ` · ${done.blocked} blocked (not a sample CV)` : ""}${done.otherRole ? ` · ${done.otherRole} for another role` : ""}${done.dup ? ` · ${done.dup} already screened` : ""}`;
+    if (done.blocked) api.say(`This preview only screens the fictional sample CVs. ${done.blocked === 1 ? "1 file wasn't" : `${done.blocked} files weren't`} in the sample set, so ${done.blocked === 1 ? "it wasn't" : "they weren't"} read or kept: ${esc(blockedNames.slice(0, 5).join(", "))}${blockedNames.length > 5 ? ` and ${blockedNames.length - 5} more` : ""}. Real CVs need the live AI and stay blocked until it runs in India. Try "Use the sample ZIP".`);
+    if (done.otherRole) api.say(`${done.otherRole} sample CV${done.otherRole > 1 ? "s are" : " is"} for another role, so I left ${done.otherRole > 1 ? "them" : "it"} out of ${esc(title)}.`);
+    if (done.scored + done.human === 0) return;
     refreshTasks(title);
     shortlistCard(title);
     const b = batch(title);
@@ -145,6 +148,9 @@ export function createScreening(api) {
     const sha = await sha256Hex(j.bytes);
     if (S.cands.some(c => c.sha === sha && c.role === title)) return "dup";
     const hit = sd.cvs.find(c => c.sha256 === sha);
+    // Founder, 21 Nov: in the prototype a CV that isn't one of the fictional sample CVs is blocked outright. It is matched
+    // by its hash only: its text is never extracted, masked or kept, and no candidate record is created.
+    if (!hit || hit.role !== title) return hit ? "otherRole" : "blocked";
     // QA-017: applications spread over the last few hours before now; upload order = application order
     const appliedAt = new Date(Date.now() - Math.max(1, 60 - S.cands.length) * 4 * 60e3);
     const name = hit?.name || j.name.replace(/\.[^.]+$/, "").replace(/^\d+-/, "").replace(/[-_]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
@@ -155,7 +161,6 @@ export function createScreening(api) {
     if (t.readable) c.maskedPreview = maskCv(t.text, [name]).text.slice(0, 600);
     let result;
     if (!t.readable) { c.score = scoreCandidate(r, { readable: false }); c.label = HUMAN_LOOK; result = "human"; }
-    else if (!hit || hit.role !== title) { c.score = null; c.label = hit ? `CV is for ${hit.role}` : "needs the live AI"; result = "needsAi"; }
     else {
       // Cache: evidence from the sample set (requirements v1). An edited card keeps the evidence for unchanged requirements;
       // anything added after v1 has no cached evidence and counts as missing until the live AI reads it.
@@ -278,7 +283,7 @@ export function createScreening(api) {
   }
   const askFor = m => ({ m4: "message queues like Kafka or RabbitMQ", m5: "any payments or fintech work", m3: "SQL and database design", m2: "API design", m1: "the languages used day to day", o2: "how they query data", o1: "Excel lookups and pivots", o3: "reports they've built", o4: "operations processes they've run" })[m.id] || m.label.toLowerCase();
 
-  /* ---------- SCR-4 (demo): rejection batch, preview only ---------- */
+  /* ---------- SCR-4 (demo): closure batch, preview only ---------- */
   // Membership comes only from computed coverage; an upward star override removes someone (logged); a downward one never adds.
   const batch = title => candsFor(title).filter(c => c.score?.under50 && c.status === "new" && !(c.score.override_stars > c.score.stars));
   function batchCard(title) {

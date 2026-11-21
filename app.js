@@ -128,7 +128,7 @@ function seed() {
     { id: id(), key: "offer", title: "Build Kiran's offer", ctx: "Backend Developer · ₹12 L · structure needs the 50% wages check", owner: "hr", when: "Today", done: false },
     { id: id(), key: "faisalOffer", title: "Approve Faisal Khan's offer letter", ctx: `Customer Success Associate · ₹5.4 L · salary check passed · Desk drafted it at ${T.drafted}`, owner: "hr", when: "Today", done: false },
     { id: id(), key: "probation", title: "Start Priya's probation review", ctx: `Probation ends ${T.day(12)} · manager review is due before then`, owner: "hr", when: "This week", done: false },
-    { id: id(), key: "bulk", title: "Send rejection notes to 4 Operations Analyst candidates", ctx: "Below 60% on the Excel test · job-relevant reason drafted", owner: "hr", when: "This week", done: false },
+    { id: id(), key: "bulk", title: "Send closure notes to 4 Operations Analyst candidates", ctx: "Below 60% on the Excel test · job-relevant reason drafted", owner: "hr", when: "This week", done: false },
     { id: id(), key: "laptop", title: "Laptop and email for Sneha", ctx: `Needed before ${T.day(5)}`, owner: "Suresh (IT)", when: "This week", done: false },
   ];
   const interviews = [
@@ -338,7 +338,7 @@ function runTask(key, echo) {
   if (t.done) return say(`"${esc(t.title)}" is already done.`);
   if (key.startsWith("scr")) { const t = task(key); if (echo && t) me(t.title); if (SCR.runTask(key)) return; }
   if (key.startsWith("approval:")) { if (echo) me(t.title); return mode === "lead" ? reviewPending(Number(key.split(":")[1])) : say("Approvals go straight out in Solo setup."); }
-  const map = { chase: ["Chase Arjun Mehta", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Reject candidates who failed the test", bulk],
+  const map = { chase: ["Chase Arjun Mehta", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Send closure notes to candidates who failed the test", bulk],
     laptop: ["Remind Suresh about Sneha's laptop", remindIT], kiranLetter: ["Draft Kiran's appointment letter", kiranLetter], faisalOffer: ["Review Faisal's offer letter", faisalOffer], kiranLaptop: ["Remind Suresh about Kiran's laptop", remindIT] };
   const m = map[key]; if (!m) return say("I can't do that one yet in this preview.");
   if (echo) me(m[0]); m[1]();
@@ -376,7 +376,7 @@ function feedback() {
   <table><tr><th>Criterion</th><th>Score</th></tr><tr><td>API design</td><td>4 / 5</td></tr><tr><td>SQL</td><td>2 / 5</td></tr><tr><td>Overall</td><td>4 / 5</td></tr></table>
   <div class="row"><span class="note">Arjun recommends: next round</span><span class="spacer"></span><button class="btn" type="button" data-a="rejectOne">Reject with reason</button><button class="btn primary" type="button" data-a="advance" data-once>Move to Round 2</button></div></div></div>`);
 }
-function feedbackNo() { feedbackIn(); person("Ankit Verma").where = "Scored 2/5"; paint(); say("Arjun scored Ankit 2/5, not a fit. Want me to draft a rejection with a job-relevant reason?"); chips([["Yes, draft it", () => reasonPicker("Ankit Verma")]]); }
+function feedbackNo() { feedbackIn(); person("Ankit Verma").where = "Scored 2/5"; paint(); say("Arjun scored Ankit 2/5, not a fit. Want me to draft a Closure Note with a job-relevant reason?"); chips([["Yes, draft it", () => reasonPicker("Ankit Verma")]]); }
 ACT.advance = b => {
   const p = person("Ankit Verma"), prev = p.where; p.where = "Round 2 with Head of Engineering"; paint();
   const d = say(`Moved Ankit to Round 2 and drafted his update: <i>"Round 2 with the Head of Engineering. You'll hear from us by ${T.day(8)}."</i> <span class="undo">· <button class="link" type="button">Undo</button> (10 min)</span>`);
@@ -388,14 +388,14 @@ ACT.rejectOne = () => reasonPicker("Ankit Verma");
 const REASONS = [["skills_gap", "Skills don't match the role's must-haves"], ["assessment_below_bar", "Assessment score below the bar"], ["experience_mismatch", "Experience level doesn't match"],
   ["salary_mismatch", "Salary expectation outside the budget"], ["location_mismatch", "Location or work mode doesn't fit"], ["notice_period", "Notice period too long"], ["role_filled", "Role has been filled"]];
 function reasonPicker(name) {
-  desk(`<div class="card draft" data-name="${esc(name)}"><h4><span class="kind">Rejection</span>${esc(name)}</h4><div class="c">
+  desk(`<div class="card draft" data-name="${esc(name)}"><h4><span class="kind">Closure Note</span>${esc(name)}</h4><div class="c">
    <label class="field" for="rr${uid}">Reason (job-relevant only)<select id="rr${uid}">${REASONS.map(r => `<option value="${r[0]}">${r[1]}</option>`).join("")}</select></label>
    <div class="why">Reasons come from a fixed list. Text about age, gender, marital status, religion, caste or pregnancy is blocked.</div>
    <div class="row"><button class="btn primary" type="button" data-a="sendReject">Approve and send</button><button class="btn" type="button" data-a="rejectDraft">Cancel</button></div></div></div>`);
 }
 ACT.sendReject = b => {
   const card = b.closest(".card"), r = card.querySelector("select"), label = r.options[r.selectedIndex].text, name = card.dataset.name;
-  approve(b, `a rejection note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Rejected"; p.where = `Rejected: ${label.toLowerCase()}`; } say(`Approved. ${PREVIEW_SENT} ${esc(name)}'s Closure Note carries that reason.`); });
+  approve(b, `a Closure Note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Rejected"; p.where = `Rejected: ${label.toLowerCase()}`; } say(`Approved. ${PREVIEW_SENT} ${esc(name)}'s Closure Note carries that reason.`); });
 };
 
 function letter() {
@@ -582,15 +582,15 @@ CTC: ₹12,00,000 per year (breakdown in Annexure A). Probation: 6 months …</d
 ACT.sendKiranLetter = b => approve(b, "Kiran's appointment letter", () => { closeTask("kiranLetter"); person("Kiran S.").checklist[1].done = true; say(`Kiran gets it for e-acknowledgement. ${PREVIEW_SENT}`); });
 
 function bulk() {
-  if (D.done.bulk) return say("Those 4 rejection notes have already gone out.");
+  if (D.done.bulk) return say("Those 4 closure notes have already been approved.");
   later(() => desk(`<div class="bubble">4 candidates scored below 60% on the Excel assessment for Operations Analyst. Here's the draft, with a job-relevant reason for each.</div>
-  <div class="card draft"><h4><span class="kind">Bulk preview</span>Reject 4 · Operations Analyst <span class="pill p-acc">Preview</span></h4>
+  <div class="card draft"><h4><span class="kind">Bulk preview</span>Closure batch · 4 · Operations Analyst <span class="pill p-acc">Preview</span></h4>
    ${D.people.filter(p => p.failed).map(p => `<div class="item"><div class="t">${esc(p.name)} · ${p.score}%</div></div>`).join("")}
    <div class="c"><div class="doc">Hi {name}, thank you for your time with Acme Fintech. We won't move forward with your application for Operations Analyst. The role needs advanced Excel modelling, and your assessment score ({score}) was below the 60% we need. We'd welcome an application for future roles.</div>
    <div class="why">Reason: assessment score below the bar. Reasons come from a fixed job-relevant list.</div>
    <div class="row"><button class="btn primary" type="button" data-a="sendBulk">Send all 4</button><button class="btn" type="button" data-a="noop">Review each</button></div></div></div>`));
 }
-ACT.sendBulk = b => approve(b, "4 rejection notes", () => {
+ACT.sendBulk = b => approve(b, "4 closure notes", () => {
   D.done.bulk = 1; closeTask("bulk");
   D.people.filter(p => p.failed).forEach(p => { p.stage = "Rejected"; p.where = "Rejected: assessment below 60%"; });
   say(`Approved. ${PREVIEW_SENT} All 4 Closure Notes carry a reason. Candidates told within 7 days this week: 100%.`);
@@ -625,7 +625,7 @@ function wrap() {
 function blocked(s) { return /\b(age|old|young|gender|female|male|woman|women|man|married|marital|single|pregnan\w*|religio\w*|hindu|muslim|christian|caste|kids?|children)\b/i.test(s); }
 function honest() {
   later(() => {
-    say(`I can't do that yet in this preview. Right now I can: show today's work, chase late feedback, create a new role, show a pipeline, build Kiran's offer, send rejection notes, draft Sneha's letter and start Priya's probation review. The full Desk agent will understand much more.`);
+    say(`I can't do that yet in this preview. Right now I can: show today's work, chase late feedback, create a new role, show a pipeline, build Kiran's offer, send closure notes, draft Sneha's letter and start Priya's probation review. The full Desk agent will understand much more.`);
     defaults();
   });
 }
@@ -643,7 +643,7 @@ function renderLiveCard(c) {
   if (c.type === "offer") return `<div class="card ctc"><h4><span class="kind">Offer · CTC</span>${c.ctc_display} <span class="pill ${c.passes ? "p-ok" : "p-late"}">${c.passes ? "Check passed" : "Check failed"}</span></h4><div class="c"><div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${c.components.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.display.slice(1))}</td></tr>`).join("")}</table></div><div class="row"><span class="pill ${c.passes ? "p-ok" : "p-late"}">Wages ${c.wages_percent}% of pay</span><span class="note">${esc(c.note)}</span></div><div class="why">${esc(c.legal)} Rule: ${esc(c.citation)}. Status: ${esc(c.status)}.</div></div></div>`;
   if (c.type === "scorecard") return `<div class="card"><h4><span class="kind">Scorecard</span><span class="pill p-ok">${esc(c.recommendation.replace("_", " "))}</span></h4><div class="c"><table><tr><th>Criterion</th><th>Score</th></tr>${Object.entries(c.scores).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v} / 5</td></tr>`).join("")}</table></div></div>`;
   if (c.type === "joiner_checklist") return `<div class="card"><h4><span class="kind">Joiner checklist</span>${esc(c.name)} · Day 1 ${esc(c.joined_on)}</h4>${c.tasks.map(t => `<div class="item"><span class="pill ${t.status === "done" ? "p-ok" : "p-warn"}">${t.status === "done" ? "Done" : "Open"}</span><div class="t">${esc(t.title)}<small>Owner: ${esc(t.owner || "you")}${t.due ? " · due " + esc(String(t.due).slice(0, 10)) : ""}</small></div></div>`).join("")}</div>`;
-  if (c.type === "bulk_preview") return `<div class="card draft"><h4><span class="kind">Bulk preview</span>${c.count} rejection notes ${wait}</h4><div class="c"><div class="doc">${esc(c.note)}</div><div class="why">Reason: ${esc(c.reason.replace(/_/g, " "))}. Job-relevant reasons only.</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
+  if (c.type === "bulk_preview") return `<div class="card draft"><h4><span class="kind">Bulk preview</span>Closure batch · ${c.count} closure notes ${wait}</h4><div class="c"><div class="doc">${esc(c.note)}</div><div class="why">Reason: ${esc(c.reason.replace(/_/g, " "))}. Job-relevant reasons only.</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
   if (c.type === "choice") return `<div class="card"><h4><span class="kind">Which one?</span>${esc(c.question)}</h4><div class="c"><div class="row">${c.options.map(o => `<button class="btn" type="button" data-say="${esc(o.value)}">${esc(o.label)}</button>`).join("")}</div></div></div>`;
   if (c.type === "info") return `<div class="card"><div class="c"><div>${esc(c.text)}</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
   return "";
@@ -668,7 +668,7 @@ function route(t) {
   if (SCR.route(t)) return;
   const s = t.toLowerCase();
   if (/\b(reject|nahi lena|drop)\b/.test(s) && blocked(s)) {
-    say("I can't use that as a rejection reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period.");
+    say("I can't use that as a closure reason. Reasons must be about the job, like skills, assessment score, experience, salary, location or notice period.");
     return chips([["Show job-relevant reasons", () => reasonPicker("this candidate")]]);
   }
   if (/\barjun\b/.test(s) && !/\b(rao|mehta)\b/.test(s)) {
@@ -714,9 +714,10 @@ $("#file").addEventListener("change", e => {
   // QA-024: PDF, DOCX and ZIP all go through the same screening pipeline, for the role in the current context
   if (files.some(f => /\.(zip|pdf|docx)$/i.test(f.name))) { if (currentTab !== "desk") location.hash = "desk"; return SCR.upload(files.filter(f => /\.(zip|pdf|docx)$/i.test(f.name))); }
   const f = files[0]; if (!f) return;
+  // Founder, 21 Nov: only the fictional sample CVs work in the prototype. Anything else is refused and not kept.
+  if (currentTab !== "desk") location.hash = "desk";
   me(`Uploaded ${f.name}`);
-  later(() => { desk(`<div class="bubble">Got <b>${esc(f.name)}</b>. Reading CVs isn't in this preview yet, so I'll add a placeholder record. Which role is it for?</div>`);
-    chips(D.roles.filter(r => r.status === "Open").slice(0, 4).map(r => [r.title, () => { D.people.push({ id: id(), name: f.name.replace(/\.[^.]+$/, ""), type: "Candidate", role: r.id, stage: "Applied", where: "Uploaded CV, not yet read", owner: "hr" }); paint(); say(`Added to ${esc(r.title)} as Applied. Consent is recorded at upload.`); }])); });
+  later(() => say(`This preview only works with the fictional sample CVs (PDF, DOCX or the sample ZIP), so I didn't read or keep <b>${esc(f.name)}</b>. Real CVs need the live AI and stay blocked until it runs in India.`));
 });
 $("#m-solo").onclick = () => { if (mode === "solo") return; mode = "solo"; paint(); say("Switched to <b>Solo</b>. You own everything, and what you approve goes out straight away."); };
 $("#m-lead").onclick = () => { if (mode === "lead") return; mode = "lead"; paint(); say(`Switched to <b>Lead + juniors</b>. You're now acting as Ritu, a junior. Anything that reaches a candidate or employee goes to ${esc(first())} for one-tap approval, in the app or on WhatsApp.`); };
@@ -774,7 +775,7 @@ function renderTab() {
           <div class="counts">${["Applied", "Screened", "Interview", "Offer"].map(s => `<span><b>${c[s]}</b>${s}</span>`).join("")}</div></button>`; }).join("")}</div>` +
       (sel ? (() => {
         const actions = sel.id === 1 && !D.done.offerSent ? `<button class="btn primary" type="button" data-v="task" data-key="offer">Build Kiran's offer in Desk</button>` + (task("chase").done ? "" : `<button class="btn" type="button" data-v="task" data-key="chase">Chase late feedback in Desk</button>`)
-          : sel.id === 2 && !D.done.bulk ? `<button class="btn primary" type="button" data-v="task" data-key="bulk">Send rejection notes with Desk</button>` : "";
+          : sel.id === 2 && !D.done.bulk ? `<button class="btn primary" type="button" data-v="task" data-key="bulk">Send closure notes with Desk</button>` : "";
         return SCR.roleStrip(sel.id) + `<div class="card"><h4><span class="kind">Board</span>${esc(sel.title)}${SCR.hasData() ? SCR.starFilterHtml() : ""}</h4><div class="c"><div class="board">${["Applied", "Screened", "Interview", "Offer"].map(st => {
           const ps = D.people.filter(p => p.role === sel.id && p.stage === st && SCR.passesFilter(p));
           return `<div class="col"><h5>${st} · ${ps.length}</h5>${ps.map(p => `<button class="cand${p.late ? " hot" : ""}" type="button" data-v="person" data-pid="${p.id}">${esc(p.name)} ${SCR.starsCell(p)}<span class="note" style="display:block">${esc(p.where)}</span></button>`).join("") || '<span class="note">None</span>'}</div>`; }).join("")}</div>
@@ -851,7 +852,7 @@ function personDetail(p) {
   if (!p) { V.personId = null; return ""; }
   const stages = ["Applied", "Screened", "Interview", "Offer"], at = stages.indexOf(p.stage);
   const role = roleOf(p.role)?.title || p.roleTitle || "";
-  let next = NEXT[p.name]; if (p.failed && !D.done.bulk) next = ["bulk", "Send rejection notes with Desk"];
+  let next = NEXT[p.name]; if (p.failed && !D.done.bulk) next = ["bulk", "Send closure notes with Desk"];
   if (next && task(next[0])?.done) next = null;
   const steps = p.type === "Candidate" && p.stage !== "Rejected" ? tracker([...stages, "Joined"], at, "Hiring stage")
     : p.type === "Joiner" ? tracker(JOIN_STAGES, p.checklist?.every(c => c.done) ? 2 : 1, "Joining stage")
@@ -956,7 +957,7 @@ function extraView(head) {
           ${auth.LIVE ? '<button class="btn" type="button" data-v="loadSample">Load sample data</button>' : '<span class="pill p-mut">Needs sign-in</span>'}</div></div>
       <div class="card"><h4><span class="kind">How Desk may act</span></h4>
         <div class="setting"><div><b style="font-weight:500">Drafts only</b><small>Nothing reaches a candidate or employee without a named approval</small></div><span class="pill p-ok">Working in preview</span></div>
-        <div class="setting"><div><b style="font-weight:500">Rejection reasons</b><small>Fixed job-relevant list; age, gender, marital status, religion, caste and pregnancy are blocked</small></div><span class="pill p-ok">Working in preview</span></div>
+        <div class="setting"><div><b style="font-weight:500">Closure reasons</b><small>Fixed job-relevant list; age, gender, marital status, religion, caste and pregnancy are blocked</small></div><span class="pill p-ok">Working in preview</span></div>
         <div class="setting"><div><b style="font-weight:500">Salary and law checks</b><small>Calculated by fixed rules, never by AI. Awaiting legal review.</small></div><span class="pill p-ok">Working in preview</span></div>
         <div class="setting"><div><b style="font-weight:500">Data stored in India (Mumbai)</b><small>This preview keeps sample data in your browser only</small></div><span class="pill p-mut">Planned</span></div>
         <div class="setting"><div><b style="font-weight:500">Aadhaar masked, consent recorded at upload</b><small>Built into the database design, not live yet</small></div><span class="pill p-mut">Planned</span></div>
