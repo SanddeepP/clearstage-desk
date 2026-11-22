@@ -21,6 +21,7 @@
       <input id="email" type="email" autocomplete="email" inputmode="email" placeholder="you@company.com" required>
     </label>
     <div class="err" id="emailErr" role="alert" hidden></div>
+    <p class="signedout" id="signedOutNote" role="status" hidden></p>
     <button class="btn primary block" type="submit" id="sendBtn">Send code</button>
   </form>
   <p class="foot" id="modeNote"></p>
@@ -90,6 +91,7 @@
     </details>
     <button class="btn" type="button" id="signOut">Sign out</button>
   </header>
+  <div class="idlewarn" id="idleWarn" role="alertdialog" aria-live="assertive" hidden><span>You'll be signed out in 5 minutes for security.</span><button class="btn primary" type="button" id="staySigned">Stay signed in</button></div>
   <div class="sampleban" role="note" id="sampleBan"><b>Sample data</b> · nothing is sent · <span id="banScripted">Desk replies are scripted in this preview</span></div>
   <div class="strip" aria-live="polite">
     <a class="tile" id="t-roles" href="#hiring"><b>3</b> open roles</a>

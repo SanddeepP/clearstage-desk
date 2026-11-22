@@ -1,6 +1,7 @@
 // Sign-in with a 6-digit code sent to the user's email (founder decision 20 Nov: code only, no sign-in link).
 // Live mode: Supabase Auth (email OTP). Demo mode: code shown on screen, profile kept in this browser.
 import { SUPABASE_URL, SUPABASE_ANON_KEY, EMAIL_HAS_CODE } from "./config.js";
+import { signedInAtFromToken } from "./lib/session.js";
 export { EMAIL_HAS_CODE };
 
 export const LIVE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -18,7 +19,7 @@ async function client() {
   if (!LIVE) return null;
   if (!sb) {
     await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js");
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, detectSessionInUrl: true, flowType: "implicit" } });
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "pkce" } });
   }
   return sb;
 }
@@ -28,7 +29,12 @@ const store = {
   set(k, v) { try { localStorage.setItem("cs:" + k, JSON.stringify(v)); } catch { /* storage blocked: demo still works for this visit */ } },
   del(k) { try { localStorage.removeItem("cs:" + k); } catch {} },
 };
-let memSession = null, memProfile = null, demoCode = null, lastSentAt = 0;
+let memSession = null, memProfile = null, demoCode = null;
+// QA-036: the send time survives a reload (sessionStorage), so "expired" vs "wrong" stays right; unknown → neutral wording.
+const sentAt = {
+  get() { try { return Number(sessionStorage.getItem("cs:codeSentAt")) || 0; } catch { return sentAt.mem || 0; } },
+  set(v) { sentAt.mem = v; try { sessionStorage.setItem("cs:codeSentAt", String(v)); } catch { /* blocked */ } },
+};
 /** Code lifetime: matches Supabase Auth → Email OTP expiration (600 s). */
 export const CODE_TTL_MS = 10 * 60e3;
 /** Seconds before "Resend code" appears (Supabase keeps its own per-user cooldown too). */
@@ -43,11 +49,11 @@ export async function sendCode(email) {
     const c = await client();
     const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
     if (error) throw new Error(friendly(error));
-    lastSentAt = Date.now();
+    sentAt.set(Date.now());
     return { demoCode: null };
   }
   demoCode = String(Math.floor(100000 + Math.random() * 900000));
-  lastSentAt = Date.now();
+  sentAt.set(Date.now());
   return { demoCode };
 }
 
@@ -57,12 +63,12 @@ export async function verifyCode(email, code) {
   if (LIVE) {
     const c = await client();
     const { data, error } = await c.auth.verifyOtp({ email, token: code, type: "email" });
-    if (error) throw new Error(codeError(error, lastSentAt));
+    if (error) throw new Error(codeError(error, sentAt.get()));
     return { email: data.user.email, id: data.user.id };
   }
-  if (demoCode && lastSentAt && Date.now() - lastSentAt > CODE_TTL_MS) throw new Error(CODE_EXPIRED);
+  if (demoCode && sentAt.get() && Date.now() - sentAt.get() > CODE_TTL_MS) throw new Error(CODE_EXPIRED);
   if (code !== demoCode) throw new Error(CODE_WRONG);
-  memSession = { email, id: "demo-" + email };
+  memSession = { email, id: "demo-" + email, signedInAt: Date.now() };
   store.set("session", memSession);
   return memSession;
 }
@@ -119,19 +125,32 @@ export async function onSignedIn(fn) {
   c.auth.onAuthStateChange((event, session) => { if (event === "SIGNED_IN" && session) fn({ email: session.user.email, id: session.user.id }); });
 }
 
-export async function signOut() {
-  if (LIVE) { const c = await client(); await c.auth.signOut(); }
-  memSession = null; store.del("session");
+/** SEC-1: scope "local" ends this browser's session; "global" ends every session for this user (Settings). */
+export async function signOut(scope = "local") {
+  try { if (LIVE) { const c = await client(); await c.auth.signOut({ scope }); } }
+  finally { memSession = null; store.del("session"); }
+}
+/** When this session started (ms): the token's sign-in time in live mode, the stored time in demo mode. */
+export async function sessionSignedInAt() {
+  if (LIVE) { const c = await client(); const { data } = await c.auth.getSession(); return data?.session ? signedInAtFromToken(data.session.access_token) : null; }
+  return (memSession ?? store.get("session"))?.signedInAt ?? null;
+}
+/** Calls fn() when Supabase reports a sign-out (it also hears other tabs). */
+export async function onSignedOut(fn) {
+  if (!LIVE) return;
+  const c = await client();
+  c.auth.onAuthStateChange(event => { if (event === "SIGNED_OUT") fn(); });
 }
 
 export const CODE_WRONG = "That code is wrong. Check the newest email from Clearstage and try again.";
 export const CODE_EXPIRED = "That code has expired. Send a new one.";
+export const CODE_UNKNOWN = "That code is wrong or has expired. Send a new one.";
 /** Supabase returns one message ("Token has expired or is invalid") for both cases, so we tell them apart by the
  *  time since the code was sent: over 10 minutes means expired, otherwise the code was mistyped or replaced. */
 export function codeError(err, sentAt, now = Date.now()) {
   const m = (err && err.message) || "", c = (err && err.code) || "";
   if (/rate limit|too many/i.test(m) || c === "over_request_rate_limit") return friendly(err);
-  if (/expired|invalid/i.test(m) || c === "otp_expired") return sentAt && now - sentAt > CODE_TTL_MS ? CODE_EXPIRED : CODE_WRONG;
+  if (/expired|invalid/i.test(m) || c === "otp_expired") return !sentAt ? CODE_UNKNOWN : now - sentAt > CODE_TTL_MS ? CODE_EXPIRED : CODE_WRONG;
   return friendly(err);
 }
 

@@ -349,3 +349,8 @@ td:last-child{font-family:var(--mono);font-size:13px}
 .demomenu>summary::after{content:" ▾";font-size:11px}
 .demopanel{position:absolute;right:0;top:calc(100% + 6px);z-index:40;display:flex;flex-direction:column;gap:8px;min-width:210px;
   background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:var(--shadow-sheet)}
+
+/* SEC-1: idle warning and the signed-out note */
+.idlewarn{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:60;display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+  max-width:calc(100% - 32px);background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 14px;box-shadow:var(--shadow-sheet);font-size:14px}
+.signedout{margin:0;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;font-size:14px}

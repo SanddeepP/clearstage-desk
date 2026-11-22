@@ -3,6 +3,7 @@ import { ctcBreakup, fixBasic, formatINR, PF_CITATION } from "./lib/ctc.js";
 import { parseHire, fmtBudget } from "./lib/intent.js";
 import { createScreening } from "./screening-demo.js";
 import { demoDates } from "./lib/demodate.js";
+import { createSessionGuard, MSG } from "./lib/session.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -62,7 +63,7 @@ codeEl.addEventListener("input", () => {
 $("#codeForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#codeErr");
   const btn = $("#verifyBtn"); busy(btn, true, "Checking…");
-  try { user = await auth.verifyCode(pendingEmail, $("#code").value); await afterSignIn(); }
+  try { user = await auth.verifyCode(pendingEmail, $("#code").value); freshSignIn = true; await afterSignIn(); }
   catch (x) { err("#codeErr", x.message); }
   finally { busy(btn, false, "Verify and sign in"); }
 });
@@ -86,7 +87,36 @@ $("#setupForm").addEventListener("submit", async e => {
   finally { busy(btn, false, "Open Desk"); }
 });
 
-$("#signOut").addEventListener("click", async () => { await auth.signOut(); user = null; profile = null; $("#email").value = ""; show("s-email"); });
+/* =================== SESSION (SEC-1) =================== */
+// Idle 30 min (warning at 25), 12 h maximum, all tabs together. The database refuses sessions over 12 h (migration 009).
+let signOutScope = "local", freshSignIn = false;
+const guard = createSessionGuard({
+  onWarn: () => { $("#idleWarn").hidden = false; },
+  onClearWarn: () => { $("#idleWarn").hidden = true; },
+  onTimeout: reason => endSession(reason),
+});
+function keepDraft() { const q = $("#q")?.value.trim(); if (q) try { sessionStorage.setItem("cs:draft", q); } catch { /* blocked */ } }
+function restoreDraft() { try { const d = sessionStorage.getItem("cs:draft"); if (d && $("#q")) { $("#q").value = d; sessionStorage.removeItem("cs:draft"); } } catch { /* blocked */ } }
+let ending = false;
+async function endSession(reason) {
+  if (ending || ($("#s-app").hidden && $("#s-setup").hidden)) return;   // already signing out, or Supabase echoed our own sign-out
+  ending = true;
+  try { await finishSignOut(reason); } finally { ending = false; }
+}
+async function finishSignOut(reason) {
+  guard.stop();
+  $("#idleWarn").hidden = true;
+  if (reason === "idle" || reason === "max") keepDraft();            // unsaved Ask Desk text comes back after sign-in
+  const scope = signOutScope; signOutScope = "local";
+  try { await auth.signOut(scope); } catch { /* still leave the app */ }
+  user = null; profile = null; $("#email").value = "";
+  const msg = { idle: MSG.idle, max: MSG.max, elsewhere: MSG.elsewhere }[reason] ?? (scope === "global" ? "Signed out on all devices." : "");
+  const n = $("#signedOutNote"); n.textContent = msg; n.hidden = !msg;
+  show("s-email");
+}
+$("#staySigned").addEventListener("click", () => guard.stay());
+$("#signOut").addEventListener("click", () => guard.active ? guard.signedOut() : endSession("manual"));   // tells the other tabs too
+if (auth.LIVE) auth.onSignedOut(() => { if (!ending) endSession("elsewhere"); });
 
 /* =================== DATA (one source for chat, Check views and strip) =================== */
 // Preview data mirrors supabase/seed.sql. QA-017: every date and time is relative to now (set again on Restart demo).
@@ -174,6 +204,10 @@ function openApp() {
   setBanner();
   init(profile.setup === "lead_juniors" ? "lead" : "solo");
   show("s-app"); showTab();
+  $("#signedOutNote").hidden = true;
+  const fresh = freshSignIn; freshSignIn = false;
+  auth.sessionSignedInAt().then(t => guard.start(t ?? undefined, { fresh })).catch(() => guard.start(undefined, { fresh }));
+  restoreDraft();
 }
 function init(m) {
   if (m) mode = m;
@@ -861,6 +895,7 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "ask") return withDesk(() => { me(b.dataset.text); route(b.dataset.text); });
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
   if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; setBanner(); renderTab(); return; }
+  if (b.dataset.v === "signOutAll") { signOutScope = "global"; guard.active ? guard.signedOut() : endSession("manual"); return; }
   if (b.dataset.v === "loadSample") { b.disabled = true; b.textContent = "Loading…"; auth.callDesk({ action: "load_sample_data" }).then(r => { b.textContent = "Loaded"; withDesk(() => say(esc(r.reply))); }).catch(e => { b.disabled = false; b.textContent = "Load sample data"; withDesk(() => say(esc(e.message))); }); return; }
   if (b.dataset.v === "mode") return $(b.dataset.mode === "lead" ? "#m-lead" : "#m-solo").click();
   if (b.dataset.v === "role") { V.hiringRole = V.hiringRole === Number(b.dataset.rid) ? null : Number(b.dataset.rid); renderTab(); }
@@ -989,6 +1024,9 @@ function extraView(head) {
           ${auth.LIVE && profile?.deskEnabled ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : `<span class="pill p-mut">${auth.LIVE ? "Not switched on" : "Needs sign-in"}</span>`}</div>
         <div class="setting"><div><b style="font-weight:500">Sample data in my workspace</b><small>Loads Acme-style roles, candidates, a joiner and a probation review into your own empty workspace, so the live agent has something to work on.</small></div>
           ${auth.LIVE ? '<button class="btn" type="button" data-v="loadSample">Load sample data</button>' : '<span class="pill p-mut">Needs sign-in</span>'}</div></div>
+      <div class="card"><h4><span class="kind">Security</span></h4>
+        <div class="setting"><div><b style="font-weight:500">Session timeout</b><small>Signed out after 30 minutes without activity (warning at 25), and always after 12 hours</small></div><span class="pill p-ok">On</span></div>
+        <div class="setting"><div><b style="font-weight:500">Sign out on all devices</b><small>Ends every session for your account, on every browser and phone</small></div><button class="btn" type="button" data-v="signOutAll">Sign out everywhere</button></div></div>
       <div class="card"><h4><span class="kind">How Desk may act</span></h4>
         <div class="setting"><div><b style="font-weight:500">Drafts only</b><small>Nothing reaches a candidate or employee without a named approval</small></div><span class="pill p-ok">Working in preview</span></div>
         <div class="setting"><div><b style="font-weight:500">Closure reasons</b><small>Fixed job-relevant list; age, gender, marital status, religion, caste and pregnancy are blocked</small></div><span class="pill p-ok">Working in preview</span></div>
