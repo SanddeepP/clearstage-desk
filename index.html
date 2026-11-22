@@ -77,15 +77,20 @@
     <div class="co" id="coLine"></div>
     <div class="spacer"></div>
     <div class="who" id="who"></div>
-    <div class="seg" role="group" aria-label="Team setup">
-      <button type="button" id="m-solo" aria-pressed="true">Solo</button>
-      <button type="button" id="m-lead" aria-pressed="false">Lead + juniors</button>
-    </div>
     <button class="btn waToggle" type="button" id="waToggle" aria-controls="wa" aria-expanded="false">WhatsApp</button>
-    <button class="btn" type="button" id="restart">Restart demo</button>
+    <details class="demomenu" id="demoMenu"><summary class="btn">Demo</summary>
+      <div class="demopanel" role="group" aria-label="Demo controls">
+        <span class="note">Team setup</span>
+        <div class="seg" role="group" aria-label="Team setup">
+          <button type="button" id="m-solo" aria-pressed="true">Solo</button>
+          <button type="button" id="m-lead" aria-pressed="false">Lead + juniors</button>
+        </div>
+        <button class="btn" type="button" id="restart">Restart demo</button>
+      </div>
+    </details>
     <button class="btn" type="button" id="signOut">Sign out</button>
   </header>
-  <div class="sampleban" role="note" id="sampleBan"><b>Sample data</b> · every person and company here is fictional · nothing is sent · please don't upload real CVs</div>
+  <div class="sampleban" role="note" id="sampleBan"><b>Sample data</b> · nothing is sent · <span id="banScripted">Desk replies are scripted in this preview</span></div>
   <div class="strip" aria-live="polite">
     <a class="tile" id="t-roles" href="#hiring"><b>3</b> open roles</a>
     <a class="tile late" id="t-late" href="#today"><b>2</b> late tasks</a>
@@ -113,7 +118,6 @@
     <div class="maincol">
     <section class="view" id="view" aria-live="polite" hidden></section>
     <section class="chat" id="chatView" aria-label="Desk chat">
-      <div class="preview" role="note">Preview: sample data, nothing is sent. Desk's replies are scripted until the AI agent is connected.</div>
       <div class="log" id="log"><div class="inner" id="inner"></div></div>
     </section>
     <div class="composer" id="composer">

@@ -315,7 +315,7 @@ If you think we missed something, reply to this email and a person will look aga
     const a = api.logApproval(`Closure batch for ${title} (${b.length} people, preview only)`, api.first());
     for (const c of b) {
       c.status = "rejected";
-      const p = api.D().people.find(x => x.id === c.id); if (p) { p.stage = "Rejected"; p.where = "Closure Note approved (preview)"; }
+      const p = api.D().people.find(x => x.id === c.id); if (p) { p.stage = "Closed"; p.where = "Closure Note approved (preview)"; }
     }
     S.batchDone[title] = true;
     api.D().tasks.filter(t => t.key === "scrBatch:" + title).forEach(t => { t.done = true; t.when = "Done"; });
@@ -362,9 +362,13 @@ If you think we missed something, reply to this email and a person will look aga
   });
 
   /* ---------- working marks (also reachable from Desk: parity rule) ---------- */
-  function doPin(c) {
+  // want: true = pin, false = unpin, undefined = toggle (the board button). QA-037: typed "pin"/"unpin" set the state, never flip it.
+  function doPin(c, want) {
     const st = list(c.role); S.pinMsg ??= {}; S.pinMsg[c.role] = "";
-    try { const was = st.pins.has(c.id); was ? st.pins.delete(c.id) : pin(st, c.id); mark(`${was ? "Unpinned" : "Pinned"} ${c.name} (${c.role})`); return was ? "Unpinned" : "Pinned"; }
+    const was = st.pins.has(c.id);
+    if (want === true && was) return "Already pinned";
+    if (want === false && !was) return "Not pinned, so nothing to unpin";
+    try { was ? st.pins.delete(c.id) : pin(st, c.id); mark(`${was ? "Unpinned" : "Pinned"} ${c.name} (${c.role})`); return was ? "Unpinned" : "Pinned"; }
     catch (err) { S.pinMsg[c.role] = err.message; return err.message; }   // QA-016: shown next to the list
     finally { refreshShortlists(); api.renderTab(); }
   }
@@ -414,7 +418,7 @@ If you think we missed something, reply to this email and a person will look aga
     if (/\bhuman look\b|\bneeds? a human\b/.test(s)) { api.later(() => humanCard(title)); return true; }
     // Parity: every working mark can also be done in Desk
     let m;
-    if ((m = s.match(/^\s*(un)?pin\s+(.+)$/))) { const c = findCand(m[2].trim()); if (c.length === 1) { api.later(() => api.say(esc(doPin(c[0])) + ` · ${esc(c[0].name)}`)); return true; } if (c.length > 1) { api.later(() => api.say(`Which one? ${c.map(x => esc(x.name)).join(" or ")}`)); return true; } }
+    if ((m = s.match(/^\s*(un)?pin\s+(.+)$/))) { const c = findCand(m[2].trim()); if (c.length === 1) { api.later(() => api.say(esc(doPin(c[0], !m[1])) + ` · ${esc(c[0].name)}`)); return true; } if (c.length > 1) { api.later(() => api.say(`Which one? ${c.map(x => esc(x.name)).join(" or ")}`)); return true; } }
     if ((m = s.match(/^\s*mark\s+(.+?)\s+(?:as\s+)?contacted\b/))) { const c = findCand(m[1].trim()); if (c.length === 1) { api.later(() => { doContacted(c[0]); api.say(`${esc(c[0].name)} marked contacted. The next best person moved into the top 10.`); }); return true; } }
     if ((m = s.match(/^\s*change\s+(.+?)\s+to\s+([1-5])\s*stars?\b(?:\s+because\s+(.+))?/))) {
       const c = findCand(m[1].trim());

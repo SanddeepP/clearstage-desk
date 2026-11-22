@@ -143,7 +143,7 @@ const roleOf = rid => D.roles.find(r => r.id === rid);
 const WHEN_ORDER = { Late: 0, Today: 1, "This week": 2, Done: 3 };
 function counts() {
   const openTasks = D.tasks.filter(t => !t.done).sort((a, b) => WHEN_ORDER[a.when] - WHEN_ORDER[b.when]);
-  const activeCands = D.people.filter(p => p.type === "Candidate" && p.stage !== "Rejected" && p.stage !== "Hired");
+  const activeCands = D.people.filter(p => p.type === "Candidate" && p.stage !== "Closed" && p.stage !== "Hired");
   return {
     openTasks, lateTasks: openTasks.filter(t => t.when === "Late"),
     activeCands, people: D.people.length,
@@ -169,13 +169,16 @@ const ownerName = o => o === "hr" ? (mode === "solo" ? "You" : "Ritu") : o === "
 
 function openApp() {
   $("#coLine").textContent = "Acme Fintech · 42 people · Hyderabad · sample data";
+  // F8: the Demo menu only while the workspace shows sample data (every account today). A real-data account hides it.
+  $("#demoMenu").hidden = !SAMPLE_DATA;
+  setBanner();
   init(profile.setup === "lead_juniors" ? "lead" : "solo");
   show("s-app"); showTab();
 }
 function init(m) {
   if (m) mode = m;
   D = seed();
-  SCR ??= createScreening({ openPerson, offerUndo, company: () => profile?.company || "Acme Fintech", D: () => D, desk, say, me, chips, later, paint, renderTab, tab: () => currentTab, esc, first, fmtIST, id, logApproval, ink });
+  SCR ??= createScreening({ openPerson, offerUndo, company: () => "Acme Fintech", D: () => D, desk, say, me, chips, later, paint, renderTab, tab: () => currentTab, esc, first, fmtIST, id, logApproval, ink });
   SCR.reset();
   inner.innerHTML = ""; ph.innerHTML = '<div class="empty">Messages Desk sends appear here.</div>';
   paint(); brief();
@@ -231,7 +234,7 @@ let SCR;   // screening demo, created once the helpers below exist
 function openPerson(pid) { V.personId = /^\d+$/.test(String(pid)) ? Number(pid) : pid; if (currentTab !== "people") location.hash = "people"; else renderTab(); }
 function defaults() {
   chips([["What's on today?", brief], ["Screen CVs for Backend Developer", () => route("Screen CVs for Backend Developer")], ["Chase Arjun", () => route("Chase Arjun")], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
-    ["Reject candidates who failed the test", bulk], ["Start Priya's probation review", probation], ["Wrap up my day", wrap]]);
+    ["Close candidates who failed the test", bulk], ["Start Priya's probation review", probation], ["Wrap up my day", wrap]]);
 }
 
 // Pencil & Ink: AI output is a draft until a named person approves it. Every approval is logged.
@@ -239,7 +242,7 @@ function defaults() {
 const fmtIST = d => new Date(d).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }).replace(/\s?([ap])\.?m\.?/i, " $1m") + " IST";
 function logApproval(what, by) { const a = { id: id(), what, by, at: new Date(), kind: "approval" }; D.audit.push(a); return a; }
 // One label per audit event, everywhere (marks, chases, rejections and undos share the log with approvals)
-const auditKind = a => a.isUndo ? ["Undone", "p-warn"] : /^Working mark/.test(a.what) ? ["Mark", "p-mut"] : /^Rejected/.test(a.what) ? ["Rejected", "p-mut"] : /^Chased/.test(a.what) ? ["Chased", "p-acc"] : a.undone ? ["Approved, undone", "p-mut"] : ["Approved", "p-ok"];
+const auditKind = a => a.isUndo ? ["Undone", "p-warn"] : /^Working mark/.test(a.what) ? ["Mark", "p-mut"] : /^Sent back/.test(a.what) ? ["Sent back", "p-mut"] : /^Chased/.test(a.what) ? ["Chased", "p-acc"] : a.undone ? ["Approved, undone", "p-mut"] : ["Approved", "p-ok"];
 const approvalsOnly = () => D.audit.filter(a => a.kind === "approval" && !a.undone);
 const auditRow = a => { const [l, c] = auditKind(a); return `<div class="item"><span class="pill ${c}">${l}</span><div class="t">${esc(a.what)}<small>by ${esc(a.by)} · ${fmtIST(a.at)}</small></div>${canUndo(a) ? `<button class="btn" type="button" data-v="undo" data-aid="${a.id}">Undo</button>` : ""}</div>`; };
 // QA-019: one rule for every Desk draft. Dashed and "Desk drafted" until approved; solid with
@@ -251,6 +254,7 @@ function ink(card, by, at) {
   const k = card.querySelector("h4 .kind"); if (k && /Desk drafted/.test(k.textContent)) k.textContent = "Approved";
   card.querySelector("h4")?.insertAdjacentHTML("beforeend", `<span class="inklabel">Approved by ${esc(by)} · ${fmtIST(at)}</span>`);
   card.querySelectorAll(".c > .row button").forEach(b => b.disabled = true);
+  card.querySelectorAll("[data-sign]").forEach(x => { x.dataset.was ??= x.textContent; x.textContent = by; });   // the approver's name on the letter
 }
 function uninked(card, by, at) {
   if (!card) return;
@@ -259,6 +263,7 @@ function uninked(card, by, at) {
   card.querySelector(".inklabel")?.remove(); card.querySelector("[data-undo]")?.remove();
   card.querySelector("h4")?.insertAdjacentHTML("beforeend", `<span class="pill p-warn">Undone by ${esc(by)} · ${fmtIST(at)}</span>`);
   card.querySelectorAll(".c > .row button").forEach(b => b.disabled = false);
+  card.querySelectorAll("[data-sign]").forEach(x => { if (x.dataset.was) x.textContent = x.dataset.was; });
 }
 function replaceOlder(subject, newer) {
   document.querySelectorAll(`.card[data-subject="${subject}"]`).forEach(c => {
@@ -338,7 +343,7 @@ function runTask(key, echo) {
   if (t.done) return say(`"${esc(t.title)}" is already done.`);
   if (key.startsWith("scr")) { const t = task(key); if (echo && t) me(t.title); if (SCR.runTask(key)) return; }
   if (key.startsWith("approval:")) { if (echo) me(t.title); return mode === "lead" ? reviewPending(Number(key.split(":")[1])) : say("Approvals go straight out in Solo setup."); }
-  const map = { chase: ["Chase Arjun Mehta", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Send closure notes to candidates who failed the test", bulk],
+  const map = { chase: ["Chase Arjun Mehta", chase], letter: ["Draft Sneha's letter", letter], offer: ["Build Kiran's offer", offer], probation: ["Start Priya's probation review", probation], bulk: ["Close candidates who failed the test", bulk],
     laptop: ["Remind Suresh about Sneha's laptop", remindIT], kiranLetter: ["Draft Kiran's appointment letter", kiranLetter], faisalOffer: ["Review Faisal's offer letter", faisalOffer], kiranLaptop: ["Remind Suresh about Kiran's laptop", remindIT] };
   const m = map[key]; if (!m) return say("I can't do that one yet in this preview.");
   if (echo) me(m[0]); m[1]();
@@ -374,7 +379,7 @@ function feedback() {
   desk(`<div class="bubble">Arjun replied on WhatsApp. I turned it into a scorecard:</div>
   <div class="card"><h4><span class="kind">Scorecard</span>Ankit Verma · Backend Developer <span class="pill p-ok">Feedback in</span></h4><div class="c">
   <table><tr><th>Criterion</th><th>Score</th></tr><tr><td>API design</td><td>4 / 5</td></tr><tr><td>SQL</td><td>2 / 5</td></tr><tr><td>Overall</td><td>4 / 5</td></tr></table>
-  <div class="row"><span class="note">Arjun recommends: next round</span><span class="spacer"></span><button class="btn" type="button" data-a="rejectOne">Reject with reason</button><button class="btn primary" type="button" data-a="advance" data-once>Move to Round 2</button></div></div></div>`);
+  <div class="row"><span class="note">Arjun recommends: next round</span><span class="spacer"></span><button class="btn" type="button" data-a="rejectOne">Close with a reason</button><button class="btn primary" type="button" data-a="advance" data-once>Move to Round 2</button></div></div></div>`);
 }
 function feedbackNo() { feedbackIn(); person("Ankit Verma").where = "Scored 2/5"; paint(); say("Arjun scored Ankit 2/5, not a fit. Want me to draft a Closure Note with a job-relevant reason?"); chips([["Yes, draft it", () => reasonPicker("Ankit Verma")]]); }
 ACT.advance = b => {
@@ -395,20 +400,54 @@ function reasonPicker(name) {
 }
 ACT.sendReject = b => {
   const card = b.closest(".card"), r = card.querySelector("select"), label = r.options[r.selectedIndex].text, name = card.dataset.name;
-  approve(b, `a Closure Note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Rejected"; p.where = `Rejected: ${label.toLowerCase()}`; } say(`Approved. ${PREVIEW_SENT} ${esc(name)}'s Closure Note carries that reason.`); });
+  approve(b, `a Closure Note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Closed"; p.where = `Closed: ${label.toLowerCase()}`; } say(`Approved. ${PREVIEW_SENT} ${esc(name)}'s Closure Note carries that reason.`); });
 };
+
+// The screens read the built-in sample data for every account until P1a switches them to Supabase.
+const SAMPLE_DATA = true;
+// F6: one slim banner. "Scripted" drops out once the live Desk agent answers for this workspace.
+function setBanner() { const sc = $("#banScripted"); if (sc) sc.hidden = !!(auth.LIVE && profile?.deskEnabled && liveDesk); }
+// F4 interim (PM 21 Nov): chat cards show the FULL letter, never "…". Fictional sample company; template from the
+// Clearstage playbook, clause text awaiting legal review (CTO 21 Nov §4.4). One template for all, so they stay consistent.
+const LETTER_TERMS = (notice = "15 days during probation and 30 days after confirmation") => `Probation: 6 months from your joining date. Your manager reviews your work before it ends, and confirmation is given in writing.
+Notice period: ${notice}, from either side, or salary in lieu of notice.
+Working hours: 9:30 am to 6:30 pm, Monday to Friday, at our Hyderabad office.
+Leave and benefits: as set out in the company's leave and benefits policy, shared on your first day.
+Confidentiality: you agree to keep company and customer information confidential during and after your employment.
+Documents: please bring the documents in your joining checklist on Day 1.`;
+const SIGN = `For Acme Fintech Pvt Ltd,
+<span data-sign>{approver's name, added when approved}</span>`;
+const letterAppointment = (name, role, ctc, from) => `Dear ${name},
+We are pleased to appoint you as ${role} at Acme Fintech Pvt Ltd, Hyderabad, with effect from ${from}.
+Compensation: CTC of ${ctc} per year, as set out in Annexure A (salary breakdown). Salary is paid monthly, by the last working day of the month.
+${LETTER_TERMS()}
+Please sign and return a copy of this letter to confirm that you accept these terms.
+${SIGN}
+Annexure A: salary breakdown (attached).`;
+const letterOffer = (name, role, ctc, joining) => `Dear ${name},
+We are pleased to offer you the role of ${role} at Acme Fintech Pvt Ltd, Hyderabad.
+Compensation: CTC of ${ctc} per year, as set out in Annexure A (salary breakdown).
+Joining date: ${joining}.
+${LETTER_TERMS()}
+This offer depends on satisfactory reference checks and the documents in your joining checklist.
+This offer is valid for 3 days from the date it is sent. To accept, reply to this email or sign and return a copy.
+${SIGN}
+Annexure A: salary breakdown (the salary check above).`;
+const letterConfirmation = (name, role, from) => `Dear ${name},
+We are happy to confirm your employment as ${role} with effect from ${from}, following the successful completion of your probation.
+Your notice period is now 30 days from either side, or salary in lieu of notice.
+All other terms of your appointment letter stay the same.
+Thank you for your work during probation. We look forward to the year ahead.
+${SIGN}`;
 
 function letter() {
   if (D.done.letter) return say("Sneha's letter is already handled.");
   D.done.letter = 1;
   later(() => desk(`<div class="bubble">Here's Sneha's appointment letter, filled from her accepted offer.</div>
   <div class="card draft"><h4><span class="kind">Desk drafted</span>Appointment letter · Sneha Rao <span class="pill p-acc">Draft</span></h4><div class="c">
-  <div class="doc">Dear Sneha,
-We are pleased to appoint you as Product Designer at Acme Fintech Pvt Ltd, effective ${T.dayYear(5)}.
-CTC: ₹9,60,000 per year (breakdown in Annexure A). Probation: 6 months.
-Notice period: 30 days after confirmation …</div>
+  <div class="doc">${letterAppointment("Sneha", "Product Designer", "₹9,60,000", T.dayYear(5))}</div>
   <div class="why">Filled from the offer approved on ${T.dayShort(-9)}. Template from the Clearstage playbook. Not legal advice.</div>
-  <div class="row"><button class="btn primary" type="button" data-a="sendLetter">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div></div></div>`));
+  <div class="row"><button class="btn primary" type="button" data-a="sendLetter">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Send back</button></div></div></div>`));
 }
 ACT.noop = () => say("Editing drafts isn't in this preview yet. In the full product this opens the draft for editing.");
 // QA-021: a fixed list of reasons, the same protected-word block as closures, stored with the audit event
@@ -416,14 +455,14 @@ const DRAFT_REJECT_REASONS = ["Wrong details (date, amount or name)", "Wrong ton
 ACT.rejectDraft = b => {
   const card = b.closest(".card"); if (card.querySelector("[data-rr]")) return;
   const what = card.querySelector("h4")?.textContent.replace(/^(Desk drafted|Approval)\s*/, "").replace(/\s*(Waiting for.*|Draft|Check (passed|failed))$/, "").trim() || "draft";
-  card.querySelector(".c").insertAdjacentHTML("beforeend", `<div class="row" data-rr><span class="note">Why reject it?</span>${DRAFT_REJECT_REASONS.map(r => `<button class="fchip" type="button">${esc(r)}</button>`).join("")}
+  card.querySelector(".c").insertAdjacentHTML("beforeend", `<div class="row" data-rr><span class="note">Why send it back?</span>${DRAFT_REJECT_REASONS.map(r => `<button class="fchip" type="button">${esc(r)}</button>`).join("")}
     <label class="field" style="flex:1;min-width:180px">Note (optional)<input type="text" maxlength="140" data-rnote></label></div>`);
   card.querySelectorAll("[data-rr] .fchip").forEach(x => x.onclick = () => {
     const note = card.querySelector("[data-rnote]").value.trim();
     if (note && blocked(note)) return say("That note mentions a protected trait. Use a job-relevant reason only.");
     card.querySelectorAll("button").forEach(y => y.disabled = true);
-    D.audit.push({ id: id(), what: `Rejected ${what}: ${x.textContent}${note ? " · " + note : ""}`, by: first(), at: new Date() });
-    say(`Rejected with the reason "${esc(x.textContent)}" and logged. Nothing was sent.`); paint();
+    D.audit.push({ id: id(), what: `Sent back ${what}: ${x.textContent}${note ? " · " + note : ""}`, by: first(), at: new Date() });
+    say(`Sent back with the reason "${esc(x.textContent)}" and logged. Nothing was sent.`); paint();
   });
 };
 ACT.sendLetter = b => approve(b, "Sneha's appointment letter", () => {
@@ -485,7 +524,7 @@ function pipeline(rid = 1) {
     const d = desk(`<div class="bubble">${esc(r.title)} pipeline. Tap a candidate.</div>
     <div class="card"><h4><span class="kind">Pipeline</span>${esc(r.title)} · ${r.days} days open <span class="pill ${c.Offer ? "p-warn" : "p-acc"}">${c.Offer ? c.Offer + " offer pending" : r.status}</span></h4><div class="c"><div class="board">${["Applied", "Screened", "Interview", "Offer"].map(col).join("")}</div></div></div>`);
     d.querySelectorAll("[data-cand]").forEach(b => b.onclick = () => openCandidate(b.dataset.cand));
-    chips([["Build Kiran's offer", offer], ["Reject candidates who failed the test", bulk]]);
+    chips([["Build Kiran's offer", offer], ["Close candidates who failed the test", bulk]]);
   });
 }
 function openCandidate(name) {
@@ -513,12 +552,9 @@ function faisalOffer() {
   later(() => desk(`<div class="bubble">Faisal Khan's offer letter is ready. I prepared it at ${T.drafted} from the approved Customer Success Associate role. Nothing has been sent.</div>
   <div class="card ctc"><h4><span class="kind">Salary check</span>Faisal Khan · Customer Success Associate <span class="pill p-ok">Check passed</span></h4><div class="c">${ctcBlock(ctcBreakup(FAISAL))}</div></div>
   <div class="card draft"><h4><span class="kind">Desk drafted</span>Offer letter · Faisal Khan <span class="pill p-warn">Waiting for ${esc(first())}</span></h4><div class="c">
-  <div class="doc">Dear Faisal,
-We are pleased to offer you the role of Customer Success Associate at Acme Fintech Pvt Ltd, Hyderabad.
-CTC: ₹5,40,000 per year (breakdown in Annexure A). Joining date: ${T.dayYear(26)}. Probation: 6 months.
-This offer is valid for 3 days from the date it is sent …</div>
+  <div class="doc">${letterOffer("Faisal", "Customer Success Associate", "₹5,40,000", T.dayYear(26))}</div>
   <div class="why">Email to Faisal Khan. Within the role's budget (₹4.5–6 L). Template from the Clearstage playbook. Not legal advice.</div>
-  <div class="row"><button class="btn primary" type="button" data-a="sendFaisal">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div>
+  <div class="row"><button class="btn primary" type="button" data-a="sendFaisal">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button><button class="btn" type="button" data-a="rejectDraft">Send back</button></div>
   <div class="note">Nothing is sent until you approve it.</div></div></div>`));
 }
 ACT.sendFaisal = b => approve(b, "Faisal Khan's offer letter", () => {
@@ -538,7 +574,7 @@ ACT.fixCtc = () => {
   desk(`<div class="bubble">Fixed: Basic is now ${formatINR(kf.inputs.basicMonthly)} a month, so wages are ${kf.check.wagesPercent}% of pay. CTC is unchanged.</div>
   <div class="card draft" data-subject="kiran-offer"><h4><span class="kind">Desk drafted</span>Offer · Kiran S. · Backend Developer <span class="pill p-ok">Check passed</span></h4><div class="c">
   <div class="ctcpanel">${ctcBlock(kf)}</div>
-  <div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve and send offer</button><button class="btn" type="button" data-a="rejectDraft">Reject</button></div>
+  <div class="row"><button class="btn primary" type="button" data-a="sendOffer">Approve and send offer</button><button class="btn" type="button" data-a="rejectDraft">Send back</button></div>
   <div class="note">Nothing is sent until you approve it.</div></div></div>`);
 };
 ACT.sendOffer = b => approve(b, "Kiran's offer letter", () => {
@@ -575,9 +611,7 @@ function kiranLetter() {
   if (D.done.kiranLetter) return say("Kiran's letter is already drafted.");
   D.done.kiranLetter = 1;
   later(() => desk(`<div class="card draft"><h4><span class="kind">Desk drafted</span>Appointment letter · Kiran S. <span class="pill p-acc">Draft</span></h4><div class="c">
-  <div class="doc">Dear Kiran,
-We are pleased to appoint you as Backend Developer at Acme Fintech Pvt Ltd, effective ${T.dayYear(19)}.
-CTC: ₹12,00,000 per year (breakdown in Annexure A). Probation: 6 months …</div>
+  <div class="doc">${letterAppointment("Kiran", "Backend Developer", "₹12,00,000", T.dayYear(19))}</div>
   <div class="row"><button class="btn primary" type="button" data-a="sendKiranLetter">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`));
 }
 ACT.sendKiranLetter = b => approve(b, "Kiran's appointment letter", () => { closeTask("kiranLetter"); person("Kiran S.").checklist[1].done = true; say(`Kiran gets it for e-acknowledgement. ${PREVIEW_SENT}`); });
@@ -593,7 +627,7 @@ function bulk() {
 }
 ACT.sendBulk = b => approve(b, "4 closure notes", () => {
   D.done.bulk = 1; closeTask("bulk");
-  D.people.filter(p => p.failed).forEach(p => { p.stage = "Rejected"; p.where = "Rejected: assessment below 60%"; });
+  D.people.filter(p => p.failed).forEach(p => { p.stage = "Closed"; p.where = "Closed: assessment below 60%"; });
   say(`Approved. ${PREVIEW_SENT} All 4 Closure Notes carry a reason. Candidates told within 7 days this week: 100%.`);
 });
 
@@ -605,8 +639,7 @@ function probation() {
     say(`Vikram, Priya's manager, gets a 3-question review on WhatsApp, due in 3 days. ${PREVIEW_SENT} I'll escalate if it slips.`);
     wa("Vikram (manager)", `Priya Nair's probation ends on ${T.day(12)}. Your call:`, [
       ["Confirm Priya", () => desk(`<div class="bubble">Vikram recommends confirming Priya. Here's the letter.</div>
-       <div class="card draft"><h4><span class="kind">Desk drafted</span>Confirmation letter · Priya Nair <span class="pill p-acc">Draft</span></h4><div class="c"><div class="doc">Dear Priya,
-We are happy to confirm your employment as Customer Success Associate with effect from ${T.dayYear(12)} …</div>
+       <div class="card draft"><h4><span class="kind">Desk drafted</span>Confirmation letter · Priya Nair <span class="pill p-acc">Draft</span></h4><div class="c"><div class="doc">${letterConfirmation("Priya", "Customer Success Associate", T.dayYear(12))}</div>
        <div class="row"><button class="btn primary" type="button" data-a="sendConf">Approve and send</button><button class="btn" type="button" data-a="noop">Edit</button></div></div></div>`)],
       ["Extend by 3 months", () => { pr.probation.status = "Extended"; pr.where = "Probation extended by 3 months"; closeTask("probation"); paint(); say("Vikram wants an extension. I'll draft the extension letter with his reasons and set a new review date."); }]]);
   });
@@ -741,7 +774,7 @@ window.addEventListener("hashchange", () => { if (!$("#s-app").hidden && D) show
 function withDesk(fn) { location.hash = "desk"; fn(); }
 
 const whenPill = w => ({ Late: "p-late", Today: "p-warn", "This week": "p-acc", Done: "p-ok" }[w] || "p-mut");
-const wherePill = p => p.stage === "Rejected" ? "p-mut" : p.late ? "p-late" : p.type === "Joiner" ? "p-acc" : p.type === "Employee" ? (p.probation?.status === "Review due" ? "p-warn" : "p-ok") : p.stage === "Offer" ? "p-warn" : "p-mut";
+const wherePill = p => p.stage === "Closed" ? "p-mut" : p.late ? "p-late" : p.type === "Joiner" ? "p-acc" : p.type === "Employee" ? (p.probation?.status === "Review due" ? "p-warn" : "p-ok") : p.stage === "Offer" ? "p-warn" : "p-mut";
 function ownerFilterHtml() {
   if (mode !== "lead") return "";
   return `<label class="sr" for="ownerF">Owner</label><select id="ownerF" data-vf="owner">${["All", "Ritu", `${first()} (you)`, "Others"].map(o => `<option${V.owner === o ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
@@ -783,13 +816,13 @@ function renderTab() {
           ${actions ? `<div class="row">${actions}</div>` : ""}</div></div>`; })() : "");
   } else if (currentTab === "people") {
     const q = V.q.trim().toLowerCase();
-    const rank = p => p.late ? 0 : p.stage === "Offer" ? 1 : p.type === "Joiner" ? 2 : p.probation && p.probation.status === "Review due" ? 3 : p.failed && p.stage !== "Rejected" ? 4 : p.stage === "Interview" ? 5 : p.stage === "Rejected" ? 9 : 6;
+    const rank = p => p.late ? 0 : p.stage === "Offer" ? 1 : p.type === "Joiner" ? 2 : p.probation && p.probation.status === "Review due" ? 3 : p.failed && p.stage !== "Closed" ? 4 : p.stage === "Interview" ? 5 : p.stage === "Closed" ? 9 : 6;
     const list = D.people.filter(p => (V.type === "All" || p.type === V.type) && ownerMatch(p.owner) && SCR.passesFilter(p) &&
       (!q || [p.name, p.roleTitle, roleOf(p.role)?.title, p.where].join(" ").toLowerCase().includes(q)))
       .map((p, i) => [p, i]).sort((a, b) => {
         // QA-015: screened people to act on first (human look, top 10 by fit, other scored by fit), then the rest
         // groups: 0 existing items needing action, 1 screened and open, 2 other unscored, 3 closed
-        const g = p => p.stage === "Rejected" ? 3 : p.screen ? (p.screen.status === "new" ? 1 : 2) : rank(p) < 6 ? 0 : 2;
+        const g = p => p.stage === "Closed" ? 3 : p.screen ? (p.screen.status === "new" ? 1 : 2) : rank(p) < 6 ? 0 : 2;
         const ka = SCR.sortKey(a[0]), kb = SCR.sortKey(b[0]);
         return (g(a[0]) - g(b[0])) || (ka[0] - kb[0]) || (ka[1] - kb[1]) || (ka[2] - kb[2]) || rank(a[0]) - rank(b[0]) || a[1] - b[1];
       }).map(x => x[0]);
@@ -827,7 +860,7 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "back") { V.personId = null; return renderTab(); }
   if (b.dataset.v === "ask") return withDesk(() => { me(b.dataset.text); route(b.dataset.text); });
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
-  if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; renderTab(); return; }
+  if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; setBanner(); renderTab(); return; }
   if (b.dataset.v === "loadSample") { b.disabled = true; b.textContent = "Loading…"; auth.callDesk({ action: "load_sample_data" }).then(r => { b.textContent = "Loaded"; withDesk(() => say(esc(r.reply))); }).catch(e => { b.disabled = false; b.textContent = "Load sample data"; withDesk(() => say(esc(e.message))); }); return; }
   if (b.dataset.v === "mode") return $(b.dataset.mode === "lead" ? "#m-lead" : "#m-solo").click();
   if (b.dataset.v === "role") { V.hiringRole = V.hiringRole === Number(b.dataset.rid) ? null : Number(b.dataset.rid); renderTab(); }
@@ -855,7 +888,7 @@ function personDetail(p) {
   const role = roleOf(p.role)?.title || p.roleTitle || "";
   let next = NEXT[p.name]; if (p.failed && !D.done.bulk) next = ["bulk", "Send closure notes with Desk"];
   if (next && task(next[0])?.done) next = null;
-  const steps = p.type === "Candidate" && p.stage !== "Rejected" ? tracker([...stages, "Joined"], at, "Hiring stage")
+  const steps = p.type === "Candidate" && p.stage !== "Closed" ? tracker([...stages, "Joined"], at, "Hiring stage")
     : p.type === "Joiner" ? tracker(JOIN_STAGES, p.checklist?.every(c => c.done) ? 2 : 1, "Joining stage")
     : p.type === "Employee" ? tracker(JOIN_STAGES, p.probation ? 3 : 2, "Joining stage") : "";
   const extra = p.checklist ? `<div class="card"><h4><span class="kind">Joiner checklist</span>Day 1: ${esc(p.day1)}</h4>${p.checklist.map(c => `<div class="item"><span class="pill ${c.done ? "p-ok" : "p-warn"}">${c.done ? "Done" : "Pending"}</span><div class="t">${esc(c.t)}</div></div>`).join("")}</div>` : "";
@@ -874,7 +907,7 @@ function personDetail(p) {
 
 function extraView(head) {
   const open = D.tasks.filter(t => !t.done), late = open.filter(t => t.when === "Late");
-  const cands = D.people.filter(p => p.type === "Candidate" && p.stage !== "Rejected");
+  const cands = D.people.filter(p => p.type === "Candidate" && p.stage !== "Closed");
   const stageTot = s => cands.filter(p => p.stage === s).length;
   const ask = (text, label, primary) => `<button class="btn${primary ? " primary" : ""}" type="button" data-v="ask" data-text="${esc(text)}">${esc(label || text)}</button>`;
   const ivStatus = i => { const p = person(i.cand); return p?.late ? ["p-late", "Feedback late"] : p && /Feedback in|Round 2|Scored/.test(p.where) ? ["p-ok", "Feedback in"] : i.confirmed ? ["p-ok", "Confirmed"] : i.confirmed === false ? ["p-warn", "Not confirmed"] : ["p-mut", "Done"]; };
@@ -916,7 +949,7 @@ function extraView(head) {
        <div class="card"><h4><span class="kind">Approval log</span></h4>${D.audit.length ? D.audit.slice().reverse().map(auditRow).join("") : '<div class="emptyv">No approvals yet today.</div>'}</div>`;
   }
   if (currentTab === "insights") {
-    const sent = D.people.filter(p => p.stage === "Rejected").length;
+    const sent = D.people.filter(p => p.stage === "Closed").length;
     return head("Insights", "How hiring is running this month · all figures are sample data", ask("Prepare a monthly recruitment summary for the founder", "Ask Desk for a summary")) +
       `<div class="stats">
         <div class="stat"><div class="l">First reply within 24h</div><div class="v">92% <small>target 95%</small></div></div>
@@ -972,3 +1005,9 @@ function extraView(head) {
   try { user = await auth.currentUser(); if (user) return afterSignIn(); } catch { /* fall through to sign-in */ }
   show("s-email");
 })();
+
+// F8: close the Demo menu on an outside click or after a choice
+document.addEventListener("click", e => {
+  const m = $("#demoMenu"); if (!m?.open) return;
+  if (!m.contains(e.target) || e.target.closest("#restart, #m-solo, #m-lead")) m.open = false;
+});
