@@ -199,9 +199,6 @@ const ownerName = o => o === "hr" ? (mode === "solo" ? "You" : "Ritu") : o === "
 
 function openApp() {
   $("#coLine").textContent = "Acme Fintech · 42 people · Hyderabad · sample data";
-  // F8: the Demo menu only while the workspace shows sample data (every account today). A real-data account hides it.
-  $("#demoMenu").hidden = !SAMPLE_DATA;
-  setBanner();
   init(profile.setup === "lead_juniors" ? "lead" : "solo");
   show("s-app"); showTab();
   $("#signedOutNote").hidden = true;
@@ -224,7 +221,6 @@ function paint() {
   $("#t-late").classList.toggle("late", c.lateTasks.length > 0);
   $("#t-queue").hidden = mode !== "lead";
   $("#who").textContent = mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
-  $("#m-solo").setAttribute("aria-pressed", mode === "solo"); $("#m-lead").setAttribute("aria-pressed", mode === "lead");
   const badge = (sel, n, label, hot) => { const el = $(sel); el.textContent = n || ""; el.title = n ? label : ""; el.setAttribute("aria-label", n ? label : ""); el.classList.toggle("hot", !!hot); };
   badge("#n-today", c.openTasks.length, plural(c.openTasks.length, "open task") + `, ${c.lateTasks.length} late`, c.lateTasks.length > 0);
   badge("#n-hiring", c.openRoles, plural(c.openRoles, "open role"));
@@ -439,8 +435,6 @@ ACT.sendReject = b => {
 
 // The screens read the built-in sample data for every account until P1a switches them to Supabase.
 const SAMPLE_DATA = true;
-// F6: one slim banner. "Scripted" drops out once the live Desk agent answers for this workspace.
-function setBanner() { const sc = $("#banScripted"); if (sc) sc.hidden = !!(auth.LIVE && profile?.deskEnabled && liveDesk); }
 // F4 interim (PM 21 Nov): chat cards show the FULL letter, never "…". Fictional sample company; template from the
 // Clearstage playbook, clause text awaiting legal review (CTO 21 Nov §4.4). One template for all, so they stay consistent.
 const LETTER_TERMS = (notice = "15 days during probation and 30 days after confirmation") => `Probation: 6 months from your joining date. Your manager reviews your work before it ends, and confirmation is given in writing.
@@ -787,9 +781,14 @@ $("#file").addEventListener("change", e => {
   me(`Uploaded ${f.name}`);
   later(() => say(`This preview only works with the fictional sample CVs (PDF, DOCX or the sample ZIP), so I didn't read or keep <b>${esc(f.name)}</b>. Real CVs need the live AI and stay blocked until it runs in India.`));
 });
-$("#m-solo").onclick = () => { if (mode === "solo") return; mode = "solo"; paint(); say("Switched to <b>Solo</b>. You own everything, and what you approve goes out straight away."); };
-$("#m-lead").onclick = () => { if (mode === "lead") return; mode = "lead"; paint(); say(`Switched to <b>Lead + juniors</b>. You're now acting as Ritu, a junior. Anything that reaches a candidate or employee goes to ${esc(first())} for one-tap approval, in the app or on WhatsApp.`); };
-$("#restart").onclick = () => { init(); location.hash = "desk"; };
+// Demo controls (UI v2: Settings → Demo, only for demo accounts)
+function setMode(m) {
+  if (mode === m) return;
+  mode = m; paint(); renderTab();
+  say(m === "solo" ? "Switched to <b>Solo</b>. You own everything, and what you approve goes out straight away."
+    : `Switched to <b>Lead + juniors</b>. You're now acting as Ritu, a junior. Anything that reaches a candidate or employee goes to ${esc(first())} for one-tap approval, in the app or on WhatsApp.`);
+}
+function restartDemo() { init(); location.hash = "desk"; }
 $("#waToggle").onclick = () => { $("#wa").classList.add("open"); $("#waToggle").setAttribute("aria-expanded", "true"); $("#waToggle").textContent = "WhatsApp"; };
 $("#waClose").onclick = () => { $("#wa").classList.remove("open"); $("#waToggle").setAttribute("aria-expanded", "false"); };
 
@@ -894,10 +893,11 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "back") { V.personId = null; return renderTab(); }
   if (b.dataset.v === "ask") return withDesk(() => { me(b.dataset.text); route(b.dataset.text); });
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
-  if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; setBanner(); renderTab(); return; }
+  if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; renderTab(); return; }
   if (b.dataset.v === "signOutAll") { signOutScope = "global"; guard.active ? guard.signedOut() : endSession("manual"); return; }
   if (b.dataset.v === "loadSample") { b.disabled = true; b.textContent = "Loading…"; auth.callDesk({ action: "load_sample_data" }).then(r => { b.textContent = "Loaded"; withDesk(() => say(esc(r.reply))); }).catch(e => { b.disabled = false; b.textContent = "Load sample data"; withDesk(() => say(esc(e.message))); }); return; }
-  if (b.dataset.v === "mode") return $(b.dataset.mode === "lead" ? "#m-lead" : "#m-solo").click();
+  if (b.dataset.v === "mode") return setMode(b.dataset.mode === "lead" ? "lead" : "solo");
+  if (b.dataset.v === "restart") return restartDemo();
   if (b.dataset.v === "role") { V.hiringRole = V.hiringRole === Number(b.dataset.rid) ? null : Number(b.dataset.rid); renderTab(); }
 });
 $("#view").addEventListener("input", e => {
@@ -1011,9 +1011,12 @@ function extraView(head) {
   }
   if (currentTab === "settings") {
     return head("Settings", "Acme Fintech · Hyderabad · sample company for this preview") +
-      `<div class="card"><h4><span class="kind">Team setup</span></h4>
-        <div class="setting"><div><b style="font-weight:500">Who handles HR and hiring</b><small>${mode === "solo" ? "Just me: what I approve goes out straight away" : "Me and juniors: anything reaching a candidate or employee needs my approval"}</small></div>
+      `${SAMPLE_DATA ? `<div class="card" id="demoSettings"><h4><span class="kind">Demo</span><span class="pill p-mut">Demo accounts only</span></h4>
+        <div class="setting"><div><b style="font-weight:500">Team setup</b><small>${mode === "solo" ? "Solo: you own everything, and what you approve goes out straight away" : "Lead + juniors: you act as Ritu, a junior; anything reaching a candidate or employee needs the lead's approval"}</small></div>
         <div class="seg" role="group" aria-label="Team setup"><button type="button" data-v="mode" data-mode="solo" aria-pressed="${mode === "solo"}">Solo</button><button type="button" data-v="mode" data-mode="lead" aria-pressed="${mode === "lead"}">Lead + juniors</button></div></div>
+        <div class="setting"><div><b style="font-weight:500">Restart demo</b><small>Puts every sample task, draft and approval back to the start</small></div><button class="btn" type="button" data-v="restart">Restart demo</button></div></div>` : ""}
+      <div class="card"><h4><span class="kind">Team</span></h4>
+        <div class="setting"><div><b style="font-weight:500">Who handles HR and hiring</b><small>${mode === "solo" ? "Just me: what I approve goes out straight away" : "Me and juniors: anything reaching a candidate or employee needs my approval"}</small></div><span class="pill p-mut">${mode === "solo" ? "Solo" : "Lead + juniors"}</span></div>
         <div class="setting"><div><b style="font-weight:500">Separate recruiting and HR teams</b><small>Handoff at offer accepted</small></div><span class="pill p-mut">Coming later</span></div></div>
       <div class="card"><h4><span class="kind">Response targets</span><span class="pill p-mut">Automatic reminders: planned</span></h4>
         <div class="setting"><div><b style="font-weight:500">First reply to applicants</b><small>Escalates to the hiring lead when missed</small></div><span class="pill p-mut">24 hours</span></div>
@@ -1043,9 +1046,3 @@ function extraView(head) {
   try { user = await auth.currentUser(); if (user) return afterSignIn(); } catch { /* fall through to sign-in */ }
   show("s-email");
 })();
-
-// F8: close the Demo menu on an outside click or after a choice
-document.addEventListener("click", e => {
-  const m = $("#demoMenu"); if (!m?.open) return;
-  if (!m.contains(e.target) || e.target.closest("#restart, #m-solo, #m-lead")) m.open = false;
-});
