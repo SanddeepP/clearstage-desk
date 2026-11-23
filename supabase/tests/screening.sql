@@ -29,7 +29,7 @@ do $$ begin perform desk_draft_requirements((select v::uuid from t_ids where k='
 exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'blocked as expected: %', sqlerrm; end $$;
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Karthik Varma #1');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Karthik Varma #1';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Karthik Varma #1'), (select v::uuid from t_ids where k='req_be'), 'cvs/01-karthik-varma.pdf', '01-karthik-varma.pdf', '7ec0995c3159136f11d5eaac448d4fdae0b339c9e54760d53ccdb95a8cb6f4de', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Karthik Varma #1'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/01-karthik-varma.pdf', '01-karthik-varma.pdf', '7ec0995c3159136f11d5eaac448d4fdae0b339c9e54760d53ccdb95a8cb6f4de', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv01 parity' as label, (r->>'fit') is not distinct from '65' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -44,7 +44,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv01 expected fit 65 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Pooja Saxena #2');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Pooja Saxena #2';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Pooja Saxena #2'), (select v::uuid from t_ids where k='req_be'), 'cvs/02-pooja-saxena.docx', '02-pooja-saxena.docx', '0fe820a7b463b2d03847bb7d6e3400b8f87add31b699638d0c5712c63a3f6f6b', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Pooja Saxena #2'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/02-pooja-saxena.docx', '02-pooja-saxena.docx', '0fe820a7b463b2d03847bb7d6e3400b8f87add31b699638d0c5712c63a3f6f6b', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv02 parity' as label, (r->>'fit') is not distinct from '45' and (r->>'stars') is not distinct from '2' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -59,7 +59,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv02 expected fit 45 stars 2 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Siddharth Kulkarni #3');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Siddharth Kulkarni #3';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Siddharth Kulkarni #3'), (select v::uuid from t_ids where k='req_be'), 'cvs/03-siddharth-kulkarni.pdf', '03-siddharth-kulkarni.pdf', '9f968fa69d409390ae4051bdbb7bbe4f99fc8df03d8f8ed0c5bd8259fe0a0283', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Siddharth Kulkarni #3'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/03-siddharth-kulkarni.pdf', '03-siddharth-kulkarni.pdf', '9f968fa69d409390ae4051bdbb7bbe4f99fc8df03d8f8ed0c5bd8259fe0a0283', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv03 parity' as label, (r->>'fit') is not distinct from '62' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Backend Developer, Kosha Payments - Aug 2021 - Present
@@ -74,7 +74,7 @@ Notice period: 30 days', '[{"requirement_id":"role","quote":"Backend Developer, 
 \if :p_ok \else \echo 'PARITY FAILED cv03 expected fit 62 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Neha Bansal #4');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Neha Bansal #4';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Neha Bansal #4'), (select v::uuid from t_ids where k='req_be'), 'cvs/04-neha-bansal.docx', '04-neha-bansal.docx', 'bc3bf8a10f379c16d7aa83618c33442f1250ab1cf77e6f1969caf87ab3259580', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Neha Bansal #4'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/04-neha-bansal.docx', '04-neha-bansal.docx', 'bc3bf8a10f379c16d7aa83618c33442f1250ab1cf77e6f1969caf87ab3259580', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv04 parity' as label, (r->>'fit') is not distinct from '61' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -89,7 +89,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv04 expected fit 61 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Nandini Das #5');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Nandini Das #5';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Nandini Das #5'), (select v::uuid from t_ids where k='req_be'), 'cvs/05-nandini-das.docx', '05-nandini-das.docx', '1798d3931de463579c36a3b402d0238a6137779294217aa347ee6de9c6dbc263', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Nandini Das #5'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/05-nandini-das.docx', '05-nandini-das.docx', '1798d3931de463579c36a3b402d0238a6137779294217aa347ee6de9c6dbc263', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv05 parity' as label, (r->>'fit') is not distinct from '25' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = true and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -101,7 +101,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv05 expected fit 25 stars 1 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Sunil Pandey #6');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Sunil Pandey #6';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Sunil Pandey #6'), (select v::uuid from t_ids where k='req_be'), 'cvs/06-sunil-pandey.pdf', '06-sunil-pandey.pdf', 'eb8eef674dafec13e7e152a17035f98b42f58e61d7c15cc35fac8e5d30ac6172', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Sunil Pandey #6'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/06-sunil-pandey.pdf', '06-sunil-pandey.pdf', 'eb8eef674dafec13e7e152a17035f98b42f58e61d7c15cc35fac8e5d30ac6172', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv06 parity' as label, (r->>'fit') is not distinct from '29' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = true and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -112,7 +112,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv06 expected fit 29 stars 1 under50 true:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Sanya Kapoor #7');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Sanya Kapoor #7';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Sanya Kapoor #7'), (select v::uuid from t_ids where k='req_be'), 'cvs/07-sanya-kapoor.docx', '07-sanya-kapoor.docx', 'e403a9a1ab9c1f9d7be65b37def9e3acb021a5bb4aa283c8cf332b2fd311204c', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Sanya Kapoor #7'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/07-sanya-kapoor.docx', '07-sanya-kapoor.docx', 'e403a9a1ab9c1f9d7be65b37def9e3acb021a5bb4aa283c8cf332b2fd311204c', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv07 parity' as label, (r->>'fit') is not distinct from '100' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Happy to relocate to Hyderabad for this role.
@@ -131,7 +131,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Happy to relocate to 
 \if :p_ok \else \echo 'PARITY FAILED cv07 expected fit 100 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Gaurav Sethi #8');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Gaurav Sethi #8';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Gaurav Sethi #8'), (select v::uuid from t_ids where k='req_be'), 'cvs/08-gaurav-sethi.pdf', '08-gaurav-sethi.pdf', 'b50fd43539674d25b53d2943345f5e0e327ae0fcabe307e2e327a82569cabdb3', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Gaurav Sethi #8'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/08-gaurav-sethi.pdf', '08-gaurav-sethi.pdf', 'b50fd43539674d25b53d2943345f5e0e327ae0fcabe307e2e327a82569cabdb3', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv08 parity' as label, (r->>'fit') is not distinct from '17' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = true and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -143,7 +143,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv08 expected fit 17 stars 1 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Preeti Chawla #9');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Preeti Chawla #9';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Preeti Chawla #9'), (select v::uuid from t_ids where k='req_be'), 'cvs/09-preeti-chawla.docx', '09-preeti-chawla.docx', '3656718e8e97cb13944ee0b9389bc93275b476269d987cd6cc35f05b0470baae', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Preeti Chawla #9'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/09-preeti-chawla.docx', '09-preeti-chawla.docx', '3656718e8e97cb13944ee0b9389bc93275b476269d987cd6cc35f05b0470baae', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv09 parity' as label, (r->>'fit') is not distinct from '17' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = true and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -153,7 +153,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv09 expected fit 17 stars 1 under50 true:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Rohit Deshpande #10');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Rohit Deshpande #10';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Rohit Deshpande #10'), (select v::uuid from t_ids where k='req_be'), 'cvs/10-rohit-deshpande.pdf', '10-rohit-deshpande.pdf', '311a59a63b62be39d2522d3e77a2fa08e6c7319067dcfb42c19d0ba29277335e', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Rohit Deshpande #10'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/10-rohit-deshpande.pdf', '10-rohit-deshpande.pdf', '311a59a63b62be39d2522d3e77a2fa08e6c7319067dcfb42c19d0ba29277335e', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv10 parity' as label, (r->>'fit') is not distinct from '86' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -168,7 +168,7 @@ Packaged services with Docker and deployed them on Kubernetes.', '[{"requirement
 \if :p_ok \else \echo 'PARITY FAILED cv10 expected fit 86 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Nikhil Bhat #11');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Nikhil Bhat #11';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Nikhil Bhat #11'), (select v::uuid from t_ids where k='req_be'), 'cvs/11-nikhil-bhat.pdf', '11-nikhil-bhat.pdf', '5728952282ba7fc8f0aea4a49b146b958a57342c9fbc53298eb2baad09eb56e6', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Nikhil Bhat #11'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/11-nikhil-bhat.pdf', '11-nikhil-bhat.pdf', '5728952282ba7fc8f0aea4a49b146b958a57342c9fbc53298eb2baad09eb56e6', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv11 parity' as label, (r->>'fit') is not distinct from '81' and (r->>'stars') is not distinct from '4' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -185,7 +185,7 @@ Notice period: 60 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv11 expected fit 81 stars 4 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Jaya Prakash #12');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Jaya Prakash #12';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Jaya Prakash #12'), (select v::uuid from t_ids where k='req_be'), 'cvs/12-jaya-prakash.docx', '12-jaya-prakash.docx', 'e0f0d29070e061b4f851ca359da5019afc24b6ea8d79556fddd43f747cdb24ff', 'Referral', true) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Jaya Prakash #12'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/12-jaya-prakash.docx', '12-jaya-prakash.docx', 'e0f0d29070e061b4f851ca359da5019afc24b6ea8d79556fddd43f747cdb24ff', 'Referral', true) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv12 parity' as label, (r->>'fit') is not distinct from '49' and (r->>'stars') is not distinct from '2' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -197,7 +197,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv12 expected fit 49 stars 2 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Ramesh Babu #13');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Ramesh Babu #13';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ramesh Babu #13'), (select v::uuid from t_ids where k='req_be'), 'cvs/13-ramesh-babu.pdf', '13-ramesh-babu.pdf', 'fedb9e24bfe0abdb87f5e94de41a5d613c5e301b4dc022ea8ef964494639e6e6', 'Referral', true) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ramesh Babu #13'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/13-ramesh-babu.pdf', '13-ramesh-babu.pdf', 'fedb9e24bfe0abdb87f5e94de41a5d613c5e301b4dc022ea8ef964494639e6e6', 'Referral', true) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv13 parity' as label, (r->>'fit') is not distinct from '53' and (r->>'stars') is not distinct from '2' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -210,7 +210,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv13 expected fit 53 stars 2 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Vikrant Shetty #14');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Vikrant Shetty #14';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Vikrant Shetty #14'), (select v::uuid from t_ids where k='req_be'), 'cvs/14-vikrant-shetty.pdf', '14-vikrant-shetty.pdf', 'b9a65ca47d1b7be3766c9b1ef842e6b17108bd8db4edbb57803e89d4428b1714', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Vikrant Shetty #14'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/14-vikrant-shetty.pdf', '14-vikrant-shetty.pdf', 'b9a65ca47d1b7be3766c9b1ef842e6b17108bd8db4edbb57803e89d4428b1714', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv14 parity' as label, (r->>'fit') is not distinct from '81' and (r->>'stars') is not distinct from '4' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -227,7 +227,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv14 expected fit 81 stars 4 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Tanvi Joshi #15');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Tanvi Joshi #15';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Tanvi Joshi #15'), (select v::uuid from t_ids where k='req_be'), 'cvs/15-tanvi-joshi.pdf', '15-tanvi-joshi.pdf', '7de5bb0062fc173964413d4a4482964a03c4aef83f1b4d3a0a83d2b76ec676b4', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Tanvi Joshi #15'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/15-tanvi-joshi.pdf', '15-tanvi-joshi.pdf', '7de5bb0062fc173964413d4a4482964a03c4aef83f1b4d3a0a83d2b76ec676b4', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv15 parity' as label, (r->>'fit') is not distinct from '65' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -242,7 +242,7 @@ Notice period: 60 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv15 expected fit 65 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Manish Gupta #16');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Manish Gupta #16';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Manish Gupta #16'), (select v::uuid from t_ids where k='req_be'), 'cvs/16-manish-gupta.docx', '16-manish-gupta.docx', '904d756b44e59b8e742d49da2e68649fb7343009ab66733c9d1c33e270f42875', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Manish Gupta #16'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/16-manish-gupta.docx', '16-manish-gupta.docx', '904d756b44e59b8e742d49da2e68649fb7343009ab66733c9d1c33e270f42875', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv16 parity' as label, (r->>'fit') is not distinct from '61' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -258,7 +258,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv16 expected fit 61 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Ritika Sharma #17');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Ritika Sharma #17';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ritika Sharma #17'), (select v::uuid from t_ids where k='req_be'), 'cvs/17-ritika-sharma.pdf', '17-ritika-sharma.pdf', 'f2b69e89a13834738d813a5252ad99ab221c85ba06ba3106eee3241db38f3734', 'Cutshort', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ritika Sharma #17'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/17-ritika-sharma.pdf', '17-ritika-sharma.pdf', 'f2b69e89a13834738d813a5252ad99ab221c85ba06ba3106eee3241db38f3734', 'Cutshort', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv17 parity' as label, (r->>'fit') is not distinct from '57' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = true and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -273,7 +273,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv17 expected fit 57 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Varun Malhotra #18');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Varun Malhotra #18';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Varun Malhotra #18'), (select v::uuid from t_ids where k='req_be'), 'cvs/18-varun-malhotra.docx', '18-varun-malhotra.docx', '76e7dd79ac5543c2a238ff340e6c75251d809efb6ce23247f27ea5e5abb1d0b6', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Varun Malhotra #18'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/18-varun-malhotra.docx', '18-varun-malhotra.docx', '76e7dd79ac5543c2a238ff340e6c75251d809efb6ce23247f27ea5e5abb1d0b6', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv18 parity' as label, (r->>'fit') is not distinct from '65' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -288,7 +288,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv18 expected fit 65 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Harish Naidu #19');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Harish Naidu #19';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Harish Naidu #19'), (select v::uuid from t_ids where k='req_be'), 'cvs/19-harish-naidu.pdf', '19-harish-naidu.pdf', '0f86cc8d3fd0054acc9ac16be8f8852b46127c434649b29857760b9e0ea04c83', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Harish Naidu #19'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/19-harish-naidu.pdf', '19-harish-naidu.pdf', '0f86cc8d3fd0054acc9ac16be8f8852b46127c434649b29857760b9e0ea04c83', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv19 parity' as label, (r->>'fit') is not distinct from '65' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -304,7 +304,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv19 expected fit 65 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Zoya Mirza #20');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Zoya Mirza #20';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Zoya Mirza #20'), (select v::uuid from t_ids where k='req_be'), 'cvs/20-zoya-mirza.docx', '20-zoya-mirza.docx', '61d5ae24a4c47aa0a17bb026528773d0ecc960f24393f6e32fad3496985c21e8', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Zoya Mirza #20'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/20-zoya-mirza.docx', '20-zoya-mirza.docx', '61d5ae24a4c47aa0a17bb026528773d0ecc960f24393f6e32fad3496985c21e8', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv20 parity' as label, (r->>'fit') is not distinct from '65' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -320,7 +320,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv20 expected fit 65 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Lavanya Reddy #21');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Lavanya Reddy #21';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Lavanya Reddy #21'), (select v::uuid from t_ids where k='req_be'), 'cvs/21-lavanya-reddy.docx', '21-lavanya-reddy.docx', '8e540e19ba7355656579ec4052ee9240943d22e7714b1057c10af3d579fb29d3', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Lavanya Reddy #21'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/21-lavanya-reddy.docx', '21-lavanya-reddy.docx', '8e540e19ba7355656579ec4052ee9240943d22e7714b1057c10af3d579fb29d3', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv21 parity' as label, (r->>'fit') is not distinct from '37' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = true and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -333,7 +333,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv21 expected fit 37 stars 1 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Ananya Iyer #22');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Ananya Iyer #22';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ananya Iyer #22'), (select v::uuid from t_ids where k='req_be'), 'cvs/22-ananya-iyer.docx', '22-ananya-iyer.docx', '0577314b22fae74adb8f0631139580c5cd4367ab31b006dc22cd68acd8f8c682', 'Instahyre', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ananya Iyer #22'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/22-ananya-iyer.docx', '22-ananya-iyer.docx', '0577314b22fae74adb8f0631139580c5cd4367ab31b006dc22cd68acd8f8c682', 'Instahyre', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv22 parity' as label, (r->>'fit') is not distinct from '81' and (r->>'stars') is not distinct from '4' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -349,7 +349,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv22 expected fit 81 stars 4 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Aarav Menon #23');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Aarav Menon #23';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Aarav Menon #23'), (select v::uuid from t_ids where k='req_be'), 'cvs/23-aarav-menon.pdf', '23-aarav-menon.pdf', 'aa6cb40f836719e49e2fb1e1b5a266604874e447127fadec89545e79eaf342c0', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Aarav Menon #23'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/23-aarav-menon.pdf', '23-aarav-menon.pdf', 'aa6cb40f836719e49e2fb1e1b5a266604874e447127fadec89545e79eaf342c0', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv23 parity' as label, (r->>'fit') is not distinct from '88' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -368,7 +368,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv23 expected fit 88 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Swati Mishra #24');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Swati Mishra #24';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Swati Mishra #24'), (select v::uuid from t_ids where k='req_be'), 'cvs/24-swati-mishra.docx', '24-swati-mishra.docx', '6a84f2cb4a0f30c0bd79a97c3b6993b2f9c7518d07383b411cac0f3b8595afdb', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Swati Mishra #24'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/24-swati-mishra.docx', '24-swati-mishra.docx', '6a84f2cb4a0f30c0bd79a97c3b6993b2f9c7518d07383b411cac0f3b8595afdb', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv24 parity' as label, (r->>'fit') is not distinct from '17' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = true and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -378,14 +378,14 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv24 expected fit 17 stars 1 under50 true:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Kavya Nambiar #25');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Kavya Nambiar #25';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Kavya Nambiar #25'), (select v::uuid from t_ids where k='req_be'), 'cvs/25-kavya-nambiar.pdf', '25-kavya-nambiar.pdf', '3828ab04f8979733a1ef6789317b1e66b718d54c960e465d01c50fd93fcb6303', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Kavya Nambiar #25'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/25-kavya-nambiar.pdf', '25-kavya-nambiar.pdf', '3828ab04f8979733a1ef6789317b1e66b718d54c960e465d01c50fd93fcb6303', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv25 parity' as label, (r->>'fit') is not distinct from null and (r->>'stars') is not distinct from null and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), false, '', '[]'::jsonb) r) x \gset p_
 \if :p_ok \else \echo 'PARITY FAILED cv25 expected fit null stars null under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Rakesh Yadav #26');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Rakesh Yadav #26';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Rakesh Yadav #26'), (select v::uuid from t_ids where k='req_be'), 'cvs/26-rakesh-yadav.pdf', '26-rakesh-yadav.pdf', '3b3eb1aefe2ac3718470719122ab271be5e8ce4729d8e0f4f1f61b2cd6b81260', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Rakesh Yadav #26'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/26-rakesh-yadav.pdf', '26-rakesh-yadav.pdf', '3b3eb1aefe2ac3718470719122ab271be5e8ce4729d8e0f4f1f61b2cd6b81260', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv26 parity' as label, (r->>'fit') is not distinct from '5' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = true and (r->>'quotes_dropped')::int = 2 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -398,7 +398,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv26 expected fit 5 stars 1 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Ishita Rao #27');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Ishita Rao #27';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ishita Rao #27'), (select v::uuid from t_ids where k='req_be'), 'cvs/27-ishita-rao.docx', '27-ishita-rao.docx', '00f5d44e3c163a8186cf2d49ce01097ffc50c2cc848c468d1074180db5c3f409', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Ishita Rao #27'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/27-ishita-rao.docx', '27-ishita-rao.docx', '00f5d44e3c163a8186cf2d49ce01097ffc50c2cc848c468d1074180db5c3f409', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv27 parity' as label, (r->>'fit') is not distinct from '96' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -416,14 +416,14 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv27 expected fit 96 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Abhishek Tiwari #28');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Abhishek Tiwari #28';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Abhishek Tiwari #28'), (select v::uuid from t_ids where k='req_be'), 'cvs/28-abhishek-tiwari.pdf', '28-abhishek-tiwari.pdf', '824721602c35c7e66e72d716b3365f2b034b6c2fb108981a55e15cc45d528b88', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Abhishek Tiwari #28'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/28-abhishek-tiwari.pdf', '28-abhishek-tiwari.pdf', '824721602c35c7e66e72d716b3365f2b034b6c2fb108981a55e15cc45d528b88', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv28 parity' as label, (r->>'fit') is not distinct from null and (r->>'stars') is not distinct from null and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), false, '', '[]'::jsonb) r) x \gset p_
 \if :p_ok \else \echo 'PARITY FAILED cv28 expected fit null stars null under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Mohit Arora #29');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Mohit Arora #29';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Mohit Arora #29'), (select v::uuid from t_ids where k='req_be'), 'cvs/29-mohit-arora.pdf', '29-mohit-arora.pdf', 'a86b2c067548c693e00357d6edad5859d90859aa3164b5d4575131073a249004', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Mohit Arora #29'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/29-mohit-arora.pdf', '29-mohit-arora.pdf', 'a86b2c067548c693e00357d6edad5859d90859aa3164b5d4575131073a249004', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv29 parity' as label, (r->>'fit') is not distinct from '49' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = true and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -435,7 +435,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv29 expected fit 49 stars 1 under50 true:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Meghna Pillai #30');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_be'), id from person where full_name = 'Meghna Pillai #30';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Meghna Pillai #30'), (select v::uuid from t_ids where k='req_be'), 'cvs/30-meghna-pillai.docx', '30-meghna-pillai.docx', '37fca71e434f1a0f24054969dd68d41eea65239692cf04162d1a0d7eb182b21e', 'LinkedIn', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Meghna Pillai #30'), (select v::uuid from t_ids where k='req_be'), (current_member()).company_id::text || '/30-meghna-pillai.docx', '30-meghna-pillai.docx', '37fca71e434f1a0f24054969dd68d41eea65239692cf04162d1a0d7eb182b21e', 'LinkedIn', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv30 parity' as label, (r->>'fit') is not distinct from '96' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -453,7 +453,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv30 expected fit 96 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Asha Fernandes #31');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Asha Fernandes #31';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Asha Fernandes #31'), (select v::uuid from t_ids where k='req_ops'), 'cvs/31-asha-fernandes.pdf', '31-asha-fernandes.pdf', 'f2d52f7cec74df52fe1ccdaebd68aa47a07ad7f45e8e05dfd3c9a8fba2e8d279', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Asha Fernandes #31'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/31-asha-fernandes.pdf', '31-asha-fernandes.pdf', 'f2d52f7cec74df52fe1ccdaebd68aa47a07ad7f45e8e05dfd3c9a8fba2e8d279', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv31 parity' as label, (r->>'fit') is not distinct from '95' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -469,7 +469,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv31 expected fit 95 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Bharat Kumar #32');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Bharat Kumar #32';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Bharat Kumar #32'), (select v::uuid from t_ids where k='req_ops'), 'cvs/32-bharat-kumar.docx', '32-bharat-kumar.docx', 'c7a5f5d166eda99eeae815e82ae256e01692f32f828d14a4a16528827c3a02bc', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Bharat Kumar #32'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/32-bharat-kumar.docx', '32-bharat-kumar.docx', 'c7a5f5d166eda99eeae815e82ae256e01692f32f828d14a4a16528827c3a02bc', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv32 parity' as label, (r->>'fit') is not distinct from '90' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -484,7 +484,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv32 expected fit 90 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Charu Mehra #33');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Charu Mehra #33';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Charu Mehra #33'), (select v::uuid from t_ids where k='req_ops'), 'cvs/33-charu-mehra.pdf', '33-charu-mehra.pdf', '19ed3807638a7611a656b84429a61348caef3a46d8ee1bd13433a07ca0e2384d', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Charu Mehra #33'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/33-charu-mehra.pdf', '33-charu-mehra.pdf', '19ed3807638a7611a656b84429a61348caef3a46d8ee1bd13433a07ca0e2384d', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv33 parity' as label, (r->>'fit') is not distinct from '95' and (r->>'stars') is not distinct from '5' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -499,7 +499,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv33 expected fit 95 stars 5 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Dinesh Rawat #34');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Dinesh Rawat #34';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Dinesh Rawat #34'), (select v::uuid from t_ids where k='req_ops'), 'cvs/34-dinesh-rawat.docx', '34-dinesh-rawat.docx', 'e3e75d29d96d3160a12b2b4ecab538aa07c1f7c5a0d84b98299ef092d480288e', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Dinesh Rawat #34'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/34-dinesh-rawat.docx', '34-dinesh-rawat.docx', 'e3e75d29d96d3160a12b2b4ecab538aa07c1f7c5a0d84b98299ef092d480288e', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv34 parity' as label, (r->>'fit') is not distinct from '70' and (r->>'stars') is not distinct from '4' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -512,7 +512,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv34 expected fit 70 stars 4 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Esha Kohli #35');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Esha Kohli #35';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Esha Kohli #35'), (select v::uuid from t_ids where k='req_ops'), 'cvs/35-esha-kohli.pdf', '35-esha-kohli.pdf', '8285c05472c746c2f8ce83ba8e43e686014198c7e1a3607edd1b6c4ccfa13290', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Esha Kohli #35'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/35-esha-kohli.pdf', '35-esha-kohli.pdf', '8285c05472c746c2f8ce83ba8e43e686014198c7e1a3607edd1b6c4ccfa13290', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv35 parity' as label, (r->>'fit') is not distinct from '50' and (r->>'stars') is not distinct from '2' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -525,7 +525,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv35 expected fit 50 stars 2 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Farhan Qureshi #36');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Farhan Qureshi #36';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Farhan Qureshi #36'), (select v::uuid from t_ids where k='req_ops'), 'cvs/36-farhan-qureshi.docx', '36-farhan-qureshi.docx', '418daa1d7958a52709e283d9f0733dcb31f8c1edd6c3a0ca228f3138f70a9fc2', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Farhan Qureshi #36'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/36-farhan-qureshi.docx', '36-farhan-qureshi.docx', '418daa1d7958a52709e283d9f0733dcb31f8c1edd6c3a0ca228f3138f70a9fc2', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv36 parity' as label, (r->>'fit') is not distinct from '60' and (r->>'stars') is not distinct from '3' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -538,7 +538,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv36 expected fit 60 stars 3 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Geeta Rani #37');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Geeta Rani #37';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Geeta Rani #37'), (select v::uuid from t_ids where k='req_ops'), 'cvs/37-geeta-rani.pdf', '37-geeta-rani.pdf', 'd49a884397c320d0b2ee50f034e24040fbc34ba62d3d7077c36cef9881cbbb4f', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Geeta Rani #37'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/37-geeta-rani.pdf', '37-geeta-rani.pdf', 'd49a884397c320d0b2ee50f034e24040fbc34ba62d3d7077c36cef9881cbbb4f', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv37 parity' as label, (r->>'fit') is not distinct from '70' and (r->>'stars') is not distinct from '4' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -550,7 +550,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv37 expected fit 70 stars 4 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Himanshu Jain #38');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Himanshu Jain #38';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Himanshu Jain #38'), (select v::uuid from t_ids where k='req_ops'), 'cvs/38-himanshu-jain.docx', '38-himanshu-jain.docx', '2f343985942142f4d887b9c07ca95a2275036e7f4860451b2afa62f6aa4b8c80', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Himanshu Jain #38'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/38-himanshu-jain.docx', '38-himanshu-jain.docx', '2f343985942142f4d887b9c07ca95a2275036e7f4860451b2afa62f6aa4b8c80', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv38 parity' as label, (r->>'fit') is not distinct from '20' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = true and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -560,7 +560,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv38 expected fit 20 stars 1 under50 true:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Irfan Sheikh #39');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Irfan Sheikh #39';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Irfan Sheikh #39'), (select v::uuid from t_ids where k='req_ops'), 'cvs/39-irfan-sheikh.pdf', '39-irfan-sheikh.pdf', 'e4ede7234e98e0e530de48933fcf561c11906d9b5e430954517a3228dc04517b', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Irfan Sheikh #39'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/39-irfan-sheikh.pdf', '39-irfan-sheikh.pdf', 'e4ede7234e98e0e530de48933fcf561c11906d9b5e430954517a3228dc04517b', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv39 parity' as label, (r->>'fit') is not distinct from '20' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = false and (r->>'safeguard')::boolean = true and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.
@@ -571,7 +571,7 @@ Notice period: 30 days', '[{"requirement_id":"c1","quote":"Based in Hyderabad an
 \if :p_ok \else \echo 'PARITY FAILED cv39 expected fit 20 stars 1 under50 false:' :'p_r' \\ select (1/0) as parity_failed; \endif
 insert into person(company_id, full_name) values ((current_member()).company_id, 'Juhi Agarwal #40');
 insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='role_ops'), id from person where full_name = 'Juhi Agarwal #40';
-select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Juhi Agarwal #40'), (select v::uuid from t_ids where k='req_ops'), 'cvs/40-juhi-agarwal.docx', '40-juhi-agarwal.docx', '4929657c49bb1b151ad5abc5c338190b442d5d2c2bbf022803e30f2c4bb0765b', 'Naukri', false) is not null;
+select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = 'Juhi Agarwal #40'), (select v::uuid from t_ids where k='req_ops'), (current_member()).company_id::text || '/40-juhi-agarwal.docx', '40-juhi-agarwal.docx', '4929657c49bb1b151ad5abc5c338190b442d5d2c2bbf022803e30f2c4bb0765b', 'Naukri', false) is not null;
 select desk_claim_cv_job() is not null;
 select 'cv40 parity' as label, (r->>'fit') is not distinct from '20' and (r->>'stars') is not distinct from '1' and (r->>'under50')::boolean = true and (r->>'safeguard')::boolean = false and (r->>'quotes_dropped')::int = 1 as ok, r
   from (select desk_save_screening((select max(id) from cv_job where status = 'running'), true, 'Based in Hyderabad and open to working from the office.

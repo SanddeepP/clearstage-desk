@@ -59,7 +59,7 @@ for (const c of seed.cvs) {
   const s = scoreCandidate(req, { readable: c.readable, evidence: c.evidence || [], unverified: c.unverified || [], years, referred: !!c.referred });
   L(`insert into person(company_id, full_name) values ((current_member()).company_id, ${q(c.name + " #" + n)});`);
   L(`insert into application(company_id, role_id, person_id) select (current_member()).company_id, (select v::uuid from t_ids where k='${roleK}'), id from person where full_name = ${q(c.name + " #" + n)};`);
-  L(`select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = ${q(c.name + " #" + n)}), (select v::uuid from t_ids where k='${reqK}'), 'cvs/${c.file}', ${q(c.file)}, '${c.sha256}', ${q(c.source)}, ${!!c.referred}) is not null;`);
+  L(`select desk_enqueue_cv((select a.id from application a join person p on p.id = a.person_id where p.full_name = ${q(c.name + " #" + n)}), (select v::uuid from t_ids where k='${reqK}'), (current_member()).company_id::text || '/${c.file}', ${q(c.file)}, '${c.sha256}', ${q(c.source)}, ${!!c.referred}) is not null;`);
   L(`select desk_claim_cv_job() is not null;`);
   // add one invented quote to every readable CV: the database must drop it
   const evIn = c.readable ? [...sent, { requirement_id: "role", quote: "Invented role at Nowhere Ltd - 2001 - Present", section: "Experience", confidence: "high" }] : [];
