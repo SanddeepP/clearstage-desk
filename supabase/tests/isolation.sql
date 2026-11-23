@@ -91,7 +91,7 @@ set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
 reset request.jwt.claim.session_id;
 do $$ begin if (current_member()).company_id::text <> (select v from iso where k = 'B') then raise exception 'FAILED: not acting as company B'; end if; end $$;
 -- B gets its own data, so its tools have something to work on
-select 'B sample data', desk_load_sample_data() is not null;
+reset role; select 'B sample data (fixture)', desk_load_sample_data() is not null; set role authenticated;
 
 -- 1. Tables: read, update, delete, insert, and moving B's own rows into A
 do $$ declare t record; n bigint; a uuid := (select v::uuid from iso where k = 'A'); b uuid := (select v::uuid from iso where k = 'B');
@@ -185,7 +185,6 @@ insert into calls values
   ('desk_get_brief',                $c$desk_get_brief()$c$),
   ('desk_get_shortlist',            $c$desk_get_shortlist('{role}', null, 50)$c$),
   ('desk_live_enabled',             $c$desk_live_enabled()$c$),
-  ('desk_load_sample_data',         $c$desk_load_sample_data()$c$),
   ('desk_log',                      $c$desk_log('iso_probe', 'offer', '{offer}', '{}', null)$c$),
   ('desk_mark_contacted',           $c$desk_mark_contacted('{app}', 'contacted')$c$),
   ('desk_mark_offer_accepted',      $c$desk_mark_offer_accepted('{offer}')$c$),
@@ -210,7 +209,11 @@ insert into calls values
   ('current_member',                $c$current_member()$c$),
   ('create_company_for_me',         $c$create_company_for_me('Iso Second Co', 'Pune', 'Iso', null, 'solo')$c$),
   ('session_fresh',                 $c$session_fresh()$c$),
-  ('session_status',                $c$session_status()$c$);
+  ('session_status',                $c$session_status()$c$),
+  ('grant_sample_access',           $c$grant_sample_access('founder@test.in')$c$),
+  ('revoke_sample_access',          $c$revoke_sample_access('founder@test.in')$c$),
+  ('is_platform_admin',             $c$is_platform_admin()$c$),
+  ('my_workspaces',                 $c$my_workspaces()$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);

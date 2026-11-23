@@ -76,7 +76,7 @@ export async function handleAction({ action, params = {}, rpc }) {
   if (action === "pin") { const r = await rpc("desk_pin", { p_role: params.role_id, p_application: params.application_id, p_pin: params.pin !== false }); return { reply: r.pinned ? "Pinned to the top 10." : "Unpinned.", cards: [] }; }
   if (action === "mark_contacted") { await rpc("desk_mark_contacted", { p_application: params.application_id, p_status: params.status || "contacted" }); return { reply: "Marked as contacted. The next best person moves into the top 10.", cards: [] }; }
   if (action === "approve_reject_batch_preview") return { reply: "Approved. This is a preview: nothing was sent and no message was queued.", cards: [] };
-  if (action === "load_sample_data") { await rpc("desk_load_sample_data"); return { reply: "Sample data loaded: 3 roles, 26 candidates, a joiner and a probation review.", cards: [] }; }
+  if (action === "load_sample_data") return { reply: "Sample data lives only in the sample company now. Ask Clearstage for demo access.", cards: [] };
   throw new Error("Unknown action");
 }
 

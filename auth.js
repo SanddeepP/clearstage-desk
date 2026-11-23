@@ -74,6 +74,15 @@ export async function verifyCode(email, code) {
 }
 
 /** Calls the Desk agent Edge Function as the signed-in user. Returns the parsed JSON (throws with a plain message on errors). */
+/** The workspaces this user can open: their own company first, then the sample company if Clearstage granted it.
+ *  Demo mode (signed-out public demo) is always the sample. */
+export async function workspaces() {
+  if (!LIVE) return [{ id: "sample", name: "Acme Fintech", is_sample: true }];
+  const c = await client();
+  const { data, error } = await c.rpc("my_workspaces");
+  if (error) throw new Error(friendly(error));
+  return Array.isArray(data) ? data : [];
+}
 export async function callDesk(body) {
   if (!LIVE) throw new Error("The live Desk agent needs a signed-in account.");
   const c = await client();

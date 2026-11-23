@@ -197,8 +197,8 @@ const first = () => cap((profile?.name || "there").trim().split(/\s+/)[0]);
 const phoneLabel = () => profile?.phone ? `you · ${profile.phone}` : "you";
 const ownerName = o => o === "hr" ? (mode === "solo" ? "You" : "Ritu") : o === "lead" ? `${first()} (you)` : o;
 
-function openApp() {
-  $("#coLine").textContent = "Acme Fintech · 42 people · Hyderabad · sample data";
+async function openApp() {
+  await loadWorkspaces(); applyWorkspace();
   init(profile.setup === "lead_juniors" ? "lead" : "solo");
   show("s-app"); showTab();
   $("#signedOutNote").hidden = true;
@@ -208,7 +208,7 @@ function openApp() {
 }
 function init(m) {
   if (m) mode = m;
-  D = seed();
+  D = isSample() ? seed() : emptyData();
   SCR ??= createScreening({ openPerson, offerUndo, company: () => "Acme Fintech", D: () => D, desk, say, me, chips, later, paint, renderTab, tab: () => currentTab, esc, first, fmtIST, id, logApproval, ink });
   SCR.reset();
   inner.innerHTML = ""; ph.innerHTML = '<div class="empty">Messages Desk sends appear here.</div>';
@@ -220,7 +220,7 @@ function paint() {
   set("#t-roles", c.openRoles); set("#t-late", c.lateTasks.length); set("#t-join", c.joiners.length); set("#t-prob", c.probDue.length); set("#t-queue", D.pending.length);
   $("#t-late").classList.toggle("late", c.lateTasks.length > 0);
   $("#t-queue").hidden = mode !== "lead";
-  $("#who").textContent = mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
+  $("#who").textContent = !isSample() || mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
   const badge = (sel, n, label, hot) => { const el = $(sel); el.textContent = n || ""; el.title = n ? label : ""; el.setAttribute("aria-label", n ? label : ""); el.classList.toggle("hot", !!hot); };
   badge("#n-today", c.openTasks.length, plural(c.openTasks.length, "open task") + `, ${c.lateTasks.length} late`, c.lateTasks.length > 0);
   badge("#n-hiring", c.openRoles, plural(c.openRoles, "open role"));
@@ -359,6 +359,10 @@ function reviewPending(pid) {
 
 function brief() {
   const h = new Date().getHours(), hi = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  if (!isSample()) {
+    desk(`<div class="bubble">${hi}, ${esc(first())}. This is your workspace. Nothing needs you yet: start by creating your first role.</div>`);
+    return;
+  }
   const c = counts(), open = c.openTasks;
   const pill = w => w === "Late" ? "p-late" : w === "Today" ? "p-warn" : "p-acc";
   desk(`<div class="bubble">${hi}, ${esc(first())}. Here's your HR for today. About 15 minutes of work.</div>
@@ -433,8 +437,45 @@ ACT.sendReject = b => {
   approve(b, `a Closure Note to ${name} (${label.toLowerCase()})`, () => { const p = person(name); if (p) { p.stage = "Closed"; p.where = `Closed: ${label.toLowerCase()}`; } say(`Approved. ${PREVIEW_SENT} ${esc(name)}'s Closure Note carries that reason.`); });
 };
 
-// The screens read the built-in sample data for every account until P1a switches them to Supabase.
-const SAMPLE_DATA = true;
+// CTO 23 Nov: an empty workspace by default. The scripted sample data (Acme Fintech) runs only in the signed-out
+// public demo and inside the sample company, which a signed-in user sees only if Clearstage granted it.
+let WS = null, WS_LIST = [];
+const isSample = () => !auth.LIVE || !!WS?.is_sample;
+const AI_OFF = "AI is off for your workspace for now, so Desk can't act here yet. Everything else works, and nothing here uses sample data.";
+const EMPTY = {
+  overview: ["Nothing needs you yet", "Start by creating your first role.", "newRole", "Create a role with Desk"],
+  today: ["Nothing needs you yet", "Start by creating your first role.", "newRole", "Create a role with Desk"],
+  hiring: ["No roles yet", "Create a role, then add candidates to it.", "newRole", "New role with Desk"],
+  people: ["No candidates yet", "Candidates appear here once you add CVs to a role.", "uploadCvs", "Upload CVs"],
+  interviews: ["No interviews yet", "Interviews appear here once candidates are scheduled.", null, null],
+  joiners: ["No joiners yet", "They appear here when an offer is accepted.", null, null],
+  approvals: ["Nothing waiting for approval", "Drafts that need your approval appear here.", null, null],
+  insights: ["No numbers yet", "Numbers appear once you have a role and candidates.", null, null],
+};
+const emptyData = () => ({ roles: [], people: [], tasks: [], interviews: [], pending: [], audit: [], done: {} });
+function emptyState(tab) {
+  const e = EMPTY[tab]; if (!e) return "";
+  return `<div class="card emptyws" data-empty="${tab}"><h3>${esc(e[0])}</h3><p>${esc(e[1])}</p>${e[2] ? `<button class="btn primary" type="button" data-v="${e[2]}">${esc(e[3])}</button>` : ""}</div>`;
+}
+async function loadWorkspaces() {
+  if (!auth.LIVE) { WS_LIST = [{ id: "sample", name: "Acme Fintech", is_sample: true }]; WS = WS_LIST[0]; return; }
+  try { WS_LIST = await auth.workspaces(); } catch { WS_LIST = []; }
+  const own = WS_LIST.find(w => !w.is_sample), sample = WS_LIST.find(w => w.is_sample);
+  let pick = null; try { pick = localStorage.getItem("cs:ws:" + (user?.id || "")); } catch { /* blocked */ }
+  WS = WS_LIST.find(w => w.id === pick) || own || sample || { id: null, name: profile?.company || "Your company", is_sample: false };
+  const sw = $("#wsSwitch");
+  sw.hidden = !(own && sample);
+  sw.innerHTML = WS_LIST.map(w => `<option value="${esc(w.id)}"${w.id === WS.id ? " selected" : ""}>${w.is_sample ? "Sample company (demo data)" : "Your company"}</option>`).join("");
+}
+$("#wsSwitch").addEventListener("change", e => {
+  WS = WS_LIST.find(w => w.id === e.target.value) || WS;
+  try { localStorage.setItem("cs:ws:" + (user?.id || ""), WS.id); } catch { /* blocked */ }
+  applyWorkspace(); init(); showTab();
+});
+function applyWorkspace() {
+  $("#coLine").textContent = isSample() ? "Acme Fintech · 42 people · Hyderabad · sample data" : [WS?.name || profile?.company, WS?.city || profile?.city].filter(Boolean).join(" · ");
+  $("#sampleBan").hidden = !isSample();                       // the grey sample banner only inside the sample company
+}
 // F4 interim (PM 21 Nov): chat cards show the FULL letter, never "…". Fictional sample company; template from the
 // Clearstage playbook, clause text awaiting legal review (CTO 21 Nov §4.4). One template for all, so they stay consistent.
 const LETTER_TERMS = (notice = "15 days during probation and 30 days after confirmation") => `Probation: 6 months from your joining date. Your manager reviews your work before it ends, and confirmation is given in writing.
@@ -727,6 +768,7 @@ async function liveTurn(t) {
 
 function route(t) {
   if (liveOn()) return liveTurn(t);
+  if (!isSample()) return later(() => say(esc(AI_OFF)));      // a real workspace never gets the scripted sample replies
   if (SCR.route(t)) return;
   const s = t.toLowerCase();
   if (/\b(reject|nahi lena|drop)\b/.test(s) && blocked(s)) {
@@ -772,6 +814,8 @@ function openCandidateNoEcho(name) { const p = person(name); say(`<b>${esc(name)
 
 $("#ask").addEventListener("submit", e => { e.preventDefault(); const v = $("#q").value.trim(); if (!v) return; if (currentTab !== "desk") location.hash = "desk"; me(v); $("#q").value = ""; route(v); });
 $("#file").addEventListener("change", e => {
+  if (!isSample()) { const f = e.target.files?.[0]; e.target.value = ""; if (currentTab !== "desk") location.hash = "desk";
+    if (f) { me(`Uploaded ${f.name}`); later(() => say(`Live CV upload arrives with go-live, so I didn't read or keep <b>${esc(f.name)}</b>.`)); } return; }
   const files = [...e.target.files]; e.target.value = "";
   // QA-024: PDF, DOCX and ZIP all go through the same screening pipeline, for the role in the current context
   if (files.some(f => /\.(zip|pdf|docx)$/i.test(f.name))) { if (currentTab !== "desk") location.hash = "desk"; return SCR.upload(files.filter(f => /\.(zip|pdf|docx)$/i.test(f.name))); }
@@ -822,6 +866,11 @@ function renderTab() {
   const v = $("#view");
   const head = (h, p, act) => `<div class="vhead"><div><h2>${h}</h2><p>${p}</p></div>${act || ""}</div>`;
   let html = "";
+  if (!isSample() && EMPTY[currentTab]) {
+    const titles = { overview: "Overview", today: "Today", hiring: "Jobs", people: "Candidates", interviews: "Interviews", joiners: "Joiners & probation", approvals: "Approvals", insights: "Insights" };
+    v.innerHTML = head(titles[currentTab], WS?.name ? esc(WS.name) : "Your company") + emptyState(currentTab);
+    return;
+  }
   if (currentTab === "people" && V.personId) {
     html = personDetail(D.people.find(p => p.id === V.personId));
   } else if (currentTab === "today") {
@@ -894,6 +943,7 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "ask") return withDesk(() => { me(b.dataset.text); route(b.dataset.text); });
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
   if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; renderTab(); return; }
+  if (b.dataset.v === "uploadCvs") { $("#file").click(); return; }
   if (b.dataset.v === "signOutAll") { signOutScope = "global"; guard.active ? guard.signedOut() : endSession("manual"); return; }
   if (b.dataset.v === "loadSample") { b.disabled = true; b.textContent = "Loading…"; auth.callDesk({ action: "load_sample_data" }).then(r => { b.textContent = "Loaded"; withDesk(() => say(esc(r.reply))); }).catch(e => { b.disabled = false; b.textContent = "Load sample data"; withDesk(() => say(esc(e.message))); }); return; }
   if (b.dataset.v === "mode") return setMode(b.dataset.mode === "lead" ? "lead" : "solo");
@@ -1011,7 +1061,7 @@ function extraView(head) {
   }
   if (currentTab === "settings") {
     return head("Settings", "Acme Fintech · Hyderabad · sample company for this preview") +
-      `${SAMPLE_DATA ? `<div class="card" id="demoSettings"><h4><span class="kind">Demo</span><span class="pill p-mut">Demo accounts only</span></h4>
+      `${isSample() && auth.LIVE === false || (auth.LIVE && WS?.is_sample) ? `<div class="card" id="demoSettings"><h4><span class="kind">Demo</span><span class="pill p-mut">Demo accounts only</span></h4>
         <div class="setting"><div><b style="font-weight:500">Team setup</b><small>${mode === "solo" ? "Solo: you own everything, and what you approve goes out straight away" : "Lead + juniors: you act as Ritu, a junior; anything reaching a candidate or employee needs the lead's approval"}</small></div>
         <div class="seg" role="group" aria-label="Team setup"><button type="button" data-v="mode" data-mode="solo" aria-pressed="${mode === "solo"}">Solo</button><button type="button" data-v="mode" data-mode="lead" aria-pressed="${mode === "lead"}">Lead + juniors</button></div></div>
         <div class="setting"><div><b style="font-weight:500">Restart demo</b><small>Puts every sample task, draft and approval back to the start</small></div><button class="btn" type="button" data-v="restart">Restart demo</button></div></div>` : ""}
@@ -1026,7 +1076,7 @@ function extraView(head) {
         <div class="setting"><div><b style="font-weight:500">Use the live agent in Ask Desk</b><small>${!auth.LIVE ? "Sign in with your email to use it." : profile?.deskEnabled ? "Desk answers with the real AI model and saves to your workspace in Supabase. Approvals still need your tap." : "Closed beta: Clearstage switches it on for your company. Until then Ask Desk uses the preview."}</small></div>
           ${auth.LIVE && profile?.deskEnabled ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : `<span class="pill p-mut">${auth.LIVE ? "Not switched on" : "Needs sign-in"}</span>`}</div>
         <div class="setting"><div><b style="font-weight:500">Sample data in my workspace</b><small>Loads Acme-style roles, candidates, a joiner and a probation review into your own empty workspace, so the live agent has something to work on.</small></div>
-          ${auth.LIVE ? '<button class="btn" type="button" data-v="loadSample">Load sample data</button>' : '<span class="pill p-mut">Needs sign-in</span>'}</div></div>
+          <span class="pill p-mut">Demo access is granted by Clearstage</span></div></div>
       <div class="card"><h4><span class="kind">Security</span></h4>
         <div class="setting"><div><b style="font-weight:500">Session timeout</b><small>Signed out after 30 minutes without activity (warning at 25), and always after 12 hours</small></div><span class="pill p-ok">On</span></div>
         <div class="setting"><div><b style="font-weight:500">Sign out on all devices</b><small>Ends every session for your account, on every browser and phone</small></div><button class="btn" type="button" data-v="signOutAll">Sign out everywhere</button></div></div>

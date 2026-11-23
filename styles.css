@@ -347,3 +347,9 @@ td:last-child{font-family:var(--mono);font-size:13px}
 .idlewarn{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:60;display:flex;gap:12px;align-items:center;flex-wrap:wrap;
   max-width:calc(100% - 32px);background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 14px;box-shadow:var(--shadow-sheet);font-size:14px}
 .signedout{margin:0;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:8px 10px;font-size:14px}
+
+/* Empty workspace by default; the sample company only on approval (CTO 23 Nov) */
+.wsswitch{min-height:36px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);padding:4px 8px;font:inherit;font-size:13px}
+.emptyws{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:24px}
+.emptyws h3{margin:0;font-size:17px}
+.emptyws p{margin:0;color:var(--ink-2)}

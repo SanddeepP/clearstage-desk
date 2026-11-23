@@ -1,0 +1,80 @@
+-- CTO ruling 23 Nov §2 + §3 tests 2–3: empty workspace by default; the sample company only on platform-admin approval.
+-- Runs after isolation.sql. Sample company = the seed company (Acme Fintech, 012 marks it is_sample).
+\set ON_ERROR_STOP on
+reset role;
+create temp table sa(k text primary key, v text); grant select on sa to authenticated;
+insert into sa values ('S', (select id::text from company where is_sample)), ('B', (select id::text from company where name = 'Other Co')),
+  ('A', (select id::text from company where name = 'Rycruit'));
+do $$ begin
+  if (select count(*) from company where is_sample) <> 1 then raise exception 'FAILED: expected exactly one sample company'; end if;
+  if (select count(*) from person where company_id = (select v::uuid from sa where k = 'S')) = 0 then raise exception 'FAILED: sample company has no people to protect'; end if;
+end $$;
+
+-- counts every row a caller can see in a company, across all company tables
+create or replace function pg_temp.visible_in(p_company uuid) returns bigint language plpgsql as $$
+declare t record; n bigint; total bigint := 0; begin
+  for t in select c.relname from pg_class c join pg_namespace s on s.oid = c.relnamespace where s.nspname = 'public' and c.relkind = 'r'
+           and exists (select 1 from information_schema.columns k where k.table_schema = 'public' and k.table_name = c.relname and k.column_name = 'company_id') loop
+    execute format('select count(*) from public.%I where company_id = $1', t.relname) into n using p_company; total := total + n;
+  end loop;
+  return total;
+end $$;
+
+set role authenticated;
+-- 1. B without access sees nothing of the sample company
+set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
+do $$ begin
+  if pg_temp.visible_in((select v::uuid from sa where k = 'S')) <> 0 then raise exception 'FAILED: B sees sample rows without access'; end if;
+  if (select count(*) from jsonb_array_elements(my_workspaces()) w where (w->>'is_sample')::boolean) <> 0 then raise exception 'FAILED: sample in B''s switcher'; end if;
+  if (select count(*) from company where is_sample) <> 0 then raise exception 'FAILED: B sees the sample company row'; end if;
+end $$;
+-- 2. Neither B nor a client admin (A's owner) can grant; nobody can load sample data into their own company
+do $$ begin perform grant_sample_access('other@test.in'); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'B grant refused: %', sqlerrm; end $$;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000001';
+do $$ begin perform grant_sample_access('other@test.in'); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'client admin grant refused: %', sqlerrm; end $$;
+do $$ begin perform desk_load_sample_data(); raise exception 'SHOULD HAVE FAILED';
+exception when insufficient_privilege then raise notice 'client sample load refused'; end $$;
+do $$ begin if is_platform_admin() then raise exception 'FAILED: client admin is a platform admin'; end if; end $$;
+-- the platform_admin table can't be read or written by clients
+do $$ begin perform 1 from platform_admin; raise exception 'SHOULD HAVE FAILED';
+exception when insufficient_privilege then raise notice 'platform_admin hidden'; end $$;
+do $$ begin insert into platform_admin values ('aaaaaaaa-0000-4000-8000-000000000001'); raise exception 'SHOULD HAVE FAILED';
+exception when insufficient_privilege then raise notice 'platform_admin write refused'; end $$;
+
+-- 3. The platform admin (filled by hand, here by the owner) grants B
+reset role;
+insert into auth.users values ('cccccccc-0000-4000-8000-0000000000ad', 'clearstage-admin@test.in') on conflict do nothing;
+insert into platform_admin values ('cccccccc-0000-4000-8000-0000000000ad') on conflict do nothing;
+set role authenticated;
+set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-0000000000ad';
+do $$ begin if not is_platform_admin() then raise exception 'FAILED: platform admin not recognised'; end if;
+  if not (grant_sample_access('Other@Test.in')->>'granted')::boolean then raise exception 'FAILED: grant'; end if; end $$;
+do $$ begin perform grant_sample_access('nobody@test.in'); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'unknown email refused: %', sqlerrm; end $$;
+
+-- 4. B now sees its own company and the sample company, and still nothing of A's
+set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
+do $$ declare ws jsonb := my_workspaces(); begin
+  if pg_temp.visible_in((select v::uuid from sa where k = 'S')) = 0 then raise exception 'FAILED: granted B sees no sample rows'; end if;
+  if pg_temp.visible_in((select v::uuid from sa where k = 'A')) <> 0 then raise exception 'FAILED: sample access exposed company A'; end if;
+  if jsonb_array_length(ws) <> 2 or not (ws->1->>'is_sample')::boolean or (ws->0->>'is_sample')::boolean then raise exception 'FAILED: switcher should be [own, sample]: %', ws; end if;
+  if (current_member()).company_id::text <> (select v from sa where k = 'B') then raise exception 'FAILED: Desk tools would act in the sample company'; end if;
+  if (select count(*) from company) <> 2 then raise exception 'FAILED: B sees % companies', (select count(*) from company); end if;
+end $$;
+-- B can't grant others, even with sample access
+do $$ begin perform grant_sample_access('junior@test.in'); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'granted user can''t grant: %', sqlerrm; end $$;
+
+-- 5. Revoke: gone at the next load
+set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-0000000000ad';
+do $$ begin if not (revoke_sample_access('other@test.in')->>'revoked')::boolean then raise exception 'FAILED: revoke'; end if; end $$;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
+do $$ begin
+  if pg_temp.visible_in((select v::uuid from sa where k = 'S')) <> 0 then raise exception 'FAILED: B still sees sample rows after revoke'; end if;
+  if jsonb_array_length(my_workspaces()) <> 1 then raise exception 'FAILED: switcher after revoke'; end if;
+end $$;
+reset role;
+do $$ begin if (select count(*) from audit_event where action in ('sample_access_granted', 'sample_access_revoked')) < 2 then raise exception 'FAILED: grant/revoke not audited'; end if; end $$;
+select 'SAMPLE ACCESS CHECKS PASSED';

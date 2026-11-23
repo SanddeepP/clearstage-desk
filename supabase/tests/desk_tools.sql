@@ -5,7 +5,10 @@ insert into auth.users values ('aaaaaaaa-0000-4000-8000-000000000001','founder@t
 set role authenticated;
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000001';
 select 'workspace' as step, create_company_for_me('Rycruit','Hyderabad','Sanddeep','+919876543210','lead_juniors') is not null as ok;
-select 'sample data', desk_load_sample_data()->>'loaded';
+-- fixture: since 012 clients can't load sample data; the test loads it as the owner, for this test company
+reset role; select 'sample data (fixture)', desk_load_sample_data()->>'loaded'; set role authenticated;
+-- and a client can't
+do $$ begin perform desk_load_sample_data(); raise exception 'SHOULD HAVE FAILED'; exception when insufficient_privilege then raise notice 'client sample load refused'; end $$;
 select 'brief', (desk_get_brief()->>'open')::int as open, (desk_get_brief()->>'late')::int as late;
 select 'find Arjun', jsonb_array_length(desk_find_people('Arjun')) as matches;   -- expect 2 (ask, don't guess)
 select 'pipeline', (select string_agg(x->>'stage' || '=' || (x->>'count'), ' ') from jsonb_array_elements(desk_show_pipeline('Backend')->'stages') x);
