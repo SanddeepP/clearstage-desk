@@ -353,3 +353,4 @@ td:last-child{font-family:var(--mono);font-size:13px}
 .emptyws{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:24px}
 .emptyws h3{margin:0;font-size:17px}
 .emptyws p{margin:0;color:var(--ink-2)}
+.saform{flex-wrap:nowrap}.saform input{flex:1;min-width:0;min-height:44px;border:1px solid var(--field);border-radius:8px;padding:0 12px;background:var(--surface)}

@@ -63,6 +63,14 @@ do $$ declare ws jsonb := my_workspaces(); begin
   if (current_member()).company_id::text <> (select v from sa where k = 'B') then raise exception 'FAILED: Desk tools would act in the sample company'; end if;
   if (select count(*) from company) <> 2 then raise exception 'FAILED: B sees % companies', (select count(*) from company); end if;
 end $$;
+-- B can't see who has access
+do $$ begin perform sample_access_list(); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'client can''t list sample access: %', sqlerrm; end $$;
+-- The founder's list shows B, granted by the founder
+set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-0000000000ad';
+do $$ declare l jsonb := sample_access_list(); begin
+  if not exists (select 1 from jsonb_array_elements(l) e where e->>'email' = 'other@test.in' and e->>'granted_by' = 'clearstage-admin@test.in') then raise exception 'FAILED: access list: %', l; end if; end $$;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
 -- B can't grant others, even with sample access
 do $$ begin perform grant_sample_access('junior@test.in'); raise exception 'SHOULD HAVE FAILED';
 exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'granted user can''t grant: %', sqlerrm; end $$;
@@ -74,6 +82,10 @@ set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
 do $$ begin
   if pg_temp.visible_in((select v::uuid from sa where k = 'S')) <> 0 then raise exception 'FAILED: B still sees sample rows after revoke'; end if;
   if jsonb_array_length(my_workspaces()) <> 1 then raise exception 'FAILED: switcher after revoke'; end if;
+end $$;
+set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-0000000000ad';
+do $$ begin
+  if exists (select 1 from jsonb_array_elements(sample_access_list()) e where e->>'email' = 'other@test.in') then raise exception 'FAILED: revoked user still listed'; end if;
 end $$;
 reset role;
 do $$ begin if (select count(*) from audit_event where action in ('sample_access_granted', 'sample_access_revoked')) < 2 then raise exception 'FAILED: grant/revoke not audited'; end if; end $$;
@@ -95,6 +107,31 @@ exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise n
 set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-0000000000ad';
 do $$ declare a jsonb := platform_alerts(5); begin
   if not exists (select 1 from jsonb_array_elements(a) e where e->>'kind' = 'ai_credit_exhausted' and e->>'company' = 'Other Co') then raise exception 'FAILED: founder can''t see the credit alert: %', a; end if;
+end $$;
+
+-- 7. Founder QA (23 Nov): the platform admin with their own company grants themselves access → switcher shows both
+reset role;
+insert into company(id, name, city) values ('cccccccc-0000-4000-8000-00000000c0c0', 'Founder Co (fictional)', 'Hyderabad') on conflict do nothing;
+insert into member(company_id, user_id, full_name, email, app_role) select 'cccccccc-0000-4000-8000-00000000c0c0', 'cccccccc-0000-4000-8000-0000000000ad', 'Founder', 'clearstage-admin@test.in', 'owner'
+  where not exists (select 1 from member where user_id = 'cccccccc-0000-4000-8000-0000000000ad' and company_id = 'cccccccc-0000-4000-8000-00000000c0c0');
+set role authenticated;
+set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-0000000000ad';
+do $$ declare ws jsonb; begin
+  if jsonb_array_length(my_workspaces()) <> 1 then raise exception 'FAILED: founder before grant: %', my_workspaces(); end if;
+  perform grant_sample_access('clearstage-admin@test.in');
+  ws := my_workspaces();
+  if jsonb_array_length(ws) <> 2 or (ws->0->>'is_sample')::boolean or not (ws->1->>'is_sample')::boolean then raise exception 'FAILED: founder switcher should be [own, sample]: %', ws; end if;
+  if (current_member()).company_id <> 'cccccccc-0000-4000-8000-00000000c0c0' then raise exception 'FAILED: founder Desk tools would act in the sample company'; end if;
+  if (select count(*) from person where company_id = (select v::uuid from sa where k = 'S')) = 0 then raise exception 'FAILED: founder sees no sample people after grant'; end if;
+end $$;
+-- A client never granted access (company A, "Rycruit") sees only its own company
+reset role;
+select set_config('request.jwt.claim.sub', (select user_id::text from member where company_id = (select id from company where name = 'Rycruit') order by created_at limit 1), false);
+set role authenticated;
+do $$ declare ws jsonb := my_workspaces(); begin
+  if jsonb_array_length(ws) <> 1 or (ws->0->>'is_sample')::boolean then raise exception 'FAILED: client without access: %', ws; end if;
+  if exists (select 1 from company where is_sample) then raise exception 'FAILED: client without access can see the sample company'; end if;
+  if exists (select 1 from person where company_id = (select v::uuid from sa where k = 'S')) then raise exception 'FAILED: client without access sees sample people'; end if;
 end $$;
 reset role;
 select 'SAMPLE ACCESS + AI LIVE CHECKS PASSED';

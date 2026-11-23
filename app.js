@@ -458,8 +458,37 @@ function emptyState(tab) {
   const e = EMPTY[tab]; if (!e) return "";
   return `<div class="card emptyws" data-empty="${tab}"><h3>${esc(e[0])}</h3><p>${esc(e[1])}</p>${e[2] ? `<button class="btn primary" type="button" data-v="${e[2]}">${esc(e[3])}</button>` : ""}</div>`;
 }
+// Founder-only: Settings → Sample data access (platform admin). Empty for everyone else, and in the public demo.
+let ADMIN = false, ACCESS = null, accessNote = "", accessBusy = false;
+async function refreshAccess() {
+  try { ACCESS = await auth.sampleAccessList(); } catch (e) { ACCESS = []; accessNote = e.message; }
+  if (currentTab === "settings") renderTab();
+}
+async function changeAccess(kind, email) {
+  email = String(email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { accessNote = "Enter a valid email address."; return renderTab(); }
+  if (accessBusy) return; accessBusy = true;
+  try {
+    if (kind === "grant") { await auth.grantSampleAccess(email); accessNote = `Sample access granted to ${email}. They see the company switcher at their next page load.`; }
+    else { const r = await auth.revokeSampleAccess(email); accessNote = r?.revoked ? `Sample access removed for ${email}.` : `${email} didn't have sample access.`; }
+    if (email === String(user?.email || "").toLowerCase()) { await loadWorkspaces(); applyWorkspace(); init(); }
+  } catch (e) { accessNote = e.message; }
+  accessBusy = false; await refreshAccess();
+}
+function sampleAccessCard() {
+  if (!ADMIN) return "";
+  if (ACCESS === null) refreshAccess();
+  const rows = (ACCESS || []).map(a => `<div class="setting"><div><b style="font-weight:500">${esc(a.email)}</b><small>Granted ${esc(new Date(a.granted_at).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" }))}${a.granted_by ? " by " + esc(a.granted_by) : ""}</small></div><button class="btn" type="button" data-v="revokeSample" data-email="${esc(a.email)}">Remove access</button></div>`).join("");
+  return `<div class="card" id="sampleAccess"><h4><span class="kind">Sample data access</span><span class="pill p-mut">Clearstage only</span></h4>
+    <div class="setting"><div><b style="font-weight:500">Give someone the sample company</b><small>They must have signed in once. They keep their own company and get a switcher to the sample company (fictional data only).</small></div></div>
+    <div class="c"><form class="row saform" id="sampleGrantForm" autocomplete="off" novalidate><input id="saEmail" type="email" placeholder="name@company.com" aria-label="Email to grant sample access"><button class="btn primary" type="submit">Grant access</button></form>
+    ${accessNote ? `<p class="note" role="status">${esc(accessNote)}</p>` : ""}</div>
+    ${ACCESS === null ? `<div class="c"><p class="note">Loading who has access…</p></div>` : rows || `<div class="c"><p class="note">Nobody has sample access yet.</p></div>`}</div>`;
+}
 async function loadWorkspaces() {
   if (!auth.LIVE) { WS_LIST = [{ id: "sample", name: "Acme Fintech", is_sample: true }]; WS = WS_LIST[0]; return; }
+  ACCESS = null; accessNote = "";
+  try { ADMIN = await auth.isPlatformAdmin(); } catch { ADMIN = false; }
   try { WS_LIST = await auth.workspaces(); } catch { WS_LIST = []; }
   const own = WS_LIST.find(w => !w.is_sample), sample = WS_LIST.find(w => w.is_sample);
   let pick = null; try { pick = localStorage.getItem("cs:ws:" + (user?.id || "")); } catch { /* blocked */ }
@@ -934,6 +963,10 @@ function renderTab() {
   v.innerHTML = `<div class="inner">${html}</div>`;
   v.scrollTop = 0;
 }
+$("#view").addEventListener("submit", e => {
+  if (e.target.id !== "sampleGrantForm") return;
+  e.preventDefault(); changeAccess("grant", $("#saEmail")?.value);
+});
 $("#view").addEventListener("click", e => {
   const b = e.target.closest("[data-v],[data-vf]"); if (!b) return;
   if (b.dataset.vf && b.dataset.val) { V[b.dataset.vf] = b.dataset.val; return renderTab(); }
@@ -946,6 +979,7 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "review") return withDesk(() => { me("Review " + b.dataset.what); reviewPending(Number(b.dataset.pid)); });
   if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; renderTab(); return; }
   if (b.dataset.v === "uploadCvs") { $("#file").click(); return; }
+  if (b.dataset.v === "revokeSample") return changeAccess("revoke", b.dataset.email);
   if (b.dataset.v === "signOutAll") { signOutScope = "global"; guard.active ? guard.signedOut() : endSession("manual"); return; }
   if (b.dataset.v === "loadSample") { b.disabled = true; b.textContent = "Loading…"; auth.callDesk({ action: "load_sample_data" }).then(r => { b.textContent = "Loaded"; withDesk(() => say(esc(r.reply))); }).catch(e => { b.disabled = false; b.textContent = "Load sample data"; withDesk(() => say(esc(e.message))); }); return; }
   if (b.dataset.v === "mode") return setMode(b.dataset.mode === "lead" ? "lead" : "solo");
@@ -1079,6 +1113,7 @@ function extraView(head) {
           ${auth.LIVE && profile?.deskEnabled && !isSample() ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : `<span class="pill p-mut">${!auth.LIVE ? "Needs sign-in" : isSample() ? "Preview" : "Not switched on"}</span>`}</div>
         <div class="setting"><div><b style="font-weight:500">Sample workspace</b><small>A separate workspace of fictional people for demos. It never mixes with your own data.</small></div>
           <span class="pill p-mut">Demo access is granted by Clearstage</span></div></div>
+      ${sampleAccessCard()}
       <div class="card"><h4><span class="kind">Security</span></h4>
         <div class="setting"><div><b style="font-weight:500">Session timeout</b><small>Signed out after 30 minutes without activity (warning at 25), and always after 12 hours</small></div><span class="pill p-ok">On</span></div>
         <div class="setting"><div><b style="font-weight:500">Sign out on all devices</b><small>Ends every session for your account, on every browser and phone</small></div><button class="btn" type="button" data-v="signOutAll">Sign out everywhere</button></div></div>

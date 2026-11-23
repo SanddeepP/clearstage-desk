@@ -220,7 +220,8 @@ insert into calls values
   ('desk_replay_get',               $c$desk_replay_get('probe')$c$),
   ('raise_platform_alert',          $c$raise_platform_alert('ai_error', '{"probe":true}')$c$),
   ('platform_alerts',               $c$platform_alerts(5)$c$),
-  ('desk_ai_context',               $c$desk_ai_context()$c$);
+  ('desk_ai_context',               $c$desk_ai_context()$c$),
+  ('sample_access_list',            $c$sample_access_list()$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);

@@ -83,6 +83,17 @@ export async function workspaces() {
   if (error) throw new Error(friendly(error));
   return Array.isArray(data) ? data : [];
 }
+async function rpc(name, args) {
+  const c = await client();
+  const { data, error } = await c.rpc(name, args);
+  if (error) throw new Error(friendly(error));
+  return data;
+}
+/** Founder-only (platform admin): who may open the sample company. Never available in the public demo. */
+export async function isPlatformAdmin() { if (!LIVE) return false; return (await rpc("is_platform_admin")) === true; }
+export async function sampleAccessList() { return LIVE ? (await rpc("sample_access_list")) ?? [] : []; }
+export async function grantSampleAccess(email) { return rpc("grant_sample_access", { p_email: email }); }
+export async function revokeSampleAccess(email) { return rpc("revoke_sample_access", { p_email: email }); }
 export async function callDesk(body) {
   if (!LIVE) throw new Error("The live Desk agent needs a signed-in account.");
   const c = await client();
