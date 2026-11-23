@@ -77,4 +77,24 @@ do $$ begin
 end $$;
 reset role;
 do $$ begin if (select count(*) from audit_event where action in ('sample_access_granted', 'sample_access_revoked')) < 2 then raise exception 'FAILED: grant/revoke not audited'; end if; end $$;
-select 'SAMPLE ACCESS CHECKS PASSED';
+
+-- 6. AI live (013): key context, replay only for the sample company, alerts only for Clearstage
+set role authenticated;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
+do $$ declare c jsonb := desk_ai_context(); begin
+  if (c->>'is_sample')::boolean or c->>'company_id' <> (select v from sa where k = 'B') then raise exception 'FAILED: AI context for B: %', c; end if;
+  if desk_replay_save('who is shortlisted', 'real company answer') then raise exception 'FAILED: a real company stored a replay'; end if;
+  if desk_replay_get('who is shortlisted') is not null then raise exception 'FAILED: a real company got a replay'; end if;
+  if not raise_platform_alert('ai_credit_exhausted', '{"function":"desk"}') then raise exception 'FAILED: alert not raised'; end if;
+  if raise_platform_alert('ai_credit_exhausted', '{"function":"desk"}') then raise exception 'FAILED: alert not deduped'; end if;
+end $$;
+do $$ begin perform platform_alerts(5); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'client can''t read alerts: %', sqlerrm; end $$;
+do $$ begin perform raise_platform_alert('anything', '{}'); raise exception 'SHOULD HAVE FAILED';
+exception when others then if sqlerrm like 'SHOULD%' then raise; end if; raise notice 'unknown alert refused'; end $$;
+set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-0000000000ad';
+do $$ declare a jsonb := platform_alerts(5); begin
+  if not exists (select 1 from jsonb_array_elements(a) e where e->>'kind' = 'ai_credit_exhausted' and e->>'company' = 'Other Co') then raise exception 'FAILED: founder can''t see the credit alert: %', a; end if;
+end $$;
+reset role;
+select 'SAMPLE ACCESS + AI LIVE CHECKS PASSED';

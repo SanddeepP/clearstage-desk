@@ -263,6 +263,7 @@ let SCR;   // screening demo, created once the helpers below exist
 // ids are numbers for the built-in sample people and strings for screened CVs ("scr-…")
 function openPerson(pid) { V.personId = /^\d+$/.test(String(pid)) ? Number(pid) : pid; if (currentTab !== "people") location.hash = "people"; else renderTab(); }
 function defaults() {
+  if (!isSample()) return chips([["What's on today?", () => route("What's on today?")], ["Show my open roles", () => route("Show my open roles")], ["Create a role", () => route("Create a new role")]]);
   chips([["What's on today?", brief], ["Screen CVs for Backend Developer", () => route("Screen CVs for Backend Developer")], ["Chase Arjun", () => route("Chase Arjun")], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
     ["Close candidates who failed the test", bulk], ["Start Priya's probation review", probation], ["Wrap up my day", wrap]]);
 }
@@ -734,8 +735,9 @@ function honest() {
 }
 /* ----- live Desk agent (Supabase Edge Function), behind a switch in Settings ----- */
 const LS = { get(k) { try { return localStorage.getItem("cs:" + k); } catch { return null; } }, set(k, v) { try { localStorage.setItem("cs:" + k, v); } catch {} } };
-let liveDesk = auth.LIVE && LS.get("liveDesk") === "1", liveConv = null;
-const liveOn = () => liveDesk && profile?.deskEnabled === true;
+let liveDesk = auth.LIVE && LS.get("liveDesk") !== "0", liveConv = null;    // on by default once Clearstage switches Desk on
+// Live Desk acts in the user's own company only; the sample workspace keeps the scripted preview.
+const liveOn = () => liveDesk && profile?.deskEnabled === true && !isSample();
 const pillCls = { late: "p-late", warn: "p-warn", info: "p-acc", ok: "p-ok" };
 function renderLiveCard(c) {
   const acts = (c.actions || []).map((a, i) => `<button class="btn${i === 0 ? " primary" : ""}" type="button" data-live='${esc(JSON.stringify({ action: a.action, params: a.params }))}'>${esc(a.label)}</button>`).join("");
@@ -1060,7 +1062,7 @@ function extraView(head) {
        <p class="note">Live connections need your approval and a security review. Nothing is connected in this preview.</p>`;
   }
   if (currentTab === "settings") {
-    return head("Settings", "Acme Fintech · Hyderabad · sample company for this preview") +
+    return head("Settings", isSample() ? "Acme Fintech · Hyderabad · sample company for this preview" : [WS?.name || profile?.company, WS?.city || profile?.city].filter(Boolean).join(" · ")) +
       `${isSample() && auth.LIVE === false || (auth.LIVE && WS?.is_sample) ? `<div class="card" id="demoSettings"><h4><span class="kind">Demo</span><span class="pill p-mut">Demo accounts only</span></h4>
         <div class="setting"><div><b style="font-weight:500">Team setup</b><small>${mode === "solo" ? "Solo: you own everything, and what you approve goes out straight away" : "Lead + juniors: you act as Ritu, a junior; anything reaching a candidate or employee needs the lead's approval"}</small></div>
         <div class="seg" role="group" aria-label="Team setup"><button type="button" data-v="mode" data-mode="solo" aria-pressed="${mode === "solo"}">Solo</button><button type="button" data-v="mode" data-mode="lead" aria-pressed="${mode === "lead"}">Lead + juniors</button></div></div>
@@ -1072,10 +1074,10 @@ function extraView(head) {
         <div class="setting"><div><b style="font-weight:500">First reply to applicants</b><small>Escalates to the hiring lead when missed</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Interview feedback</b><small>Reminder at 4 hours, escalation at 24 hours</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Probation review</b><small>Manager review due 15 days before the end date</small></div><span class="pill p-mut">15 days</span></div></div>
-      <div class="card"><h4><span class="kind">Live Desk agent (beta)</span><span class="pill ${liveOn() ? "p-ok" : "p-mut"}">${liveOn() ? "On" : "Off"}</span></h4>
-        <div class="setting"><div><b style="font-weight:500">Use the live agent in Ask Desk</b><small>${!auth.LIVE ? "Sign in with your email to use it." : profile?.deskEnabled ? "Desk answers with the real AI model and saves to your workspace in Supabase. Approvals still need your tap." : "Closed beta: Clearstage switches it on for your company. Until then Ask Desk uses the preview."}</small></div>
-          ${auth.LIVE && profile?.deskEnabled ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : `<span class="pill p-mut">${auth.LIVE ? "Not switched on" : "Needs sign-in"}</span>`}</div>
-        <div class="setting"><div><b style="font-weight:500">Sample data in my workspace</b><small>Loads Acme-style roles, candidates, a joiner and a probation review into your own empty workspace, so the live agent has something to work on.</small></div>
+      <div class="card"><h4><span class="kind">Desk AI</span><span class="pill ${profile?.deskEnabled ? "p-ok" : "p-mut"}">${profile?.deskEnabled ? "Enabled for your company" : "Not enabled"}</span></h4>
+        <div class="setting"><div><b style="font-weight:500">Use the live agent in Ask Desk</b><small>${!auth.LIVE ? "Sign in with your email to use it." : isSample() ? "The sample workspace uses the scripted preview. Switch to your own workspace to use the live agent." : profile?.deskEnabled ? "Desk answers with Gemini and saves to your workspace. Approvals still need your tap. Your data is not used to train the model." : "AI is off for your workspace. Clearstage switches it on for your company."}</small></div>
+          ${auth.LIVE && profile?.deskEnabled && !isSample() ? `<div class="seg" role="group" aria-label="Live Desk agent"><button type="button" data-v="liveToggle" aria-pressed="${!liveDesk}">Off</button><button type="button" data-v="liveToggle" aria-pressed="${liveDesk}">On</button></div>` : `<span class="pill p-mut">${!auth.LIVE ? "Needs sign-in" : isSample() ? "Preview" : "Not switched on"}</span>`}</div>
+        <div class="setting"><div><b style="font-weight:500">Sample workspace</b><small>A separate workspace of fictional people for demos. It never mixes with your own data.</small></div>
           <span class="pill p-mut">Demo access is granted by Clearstage</span></div></div>
       <div class="card"><h4><span class="kind">Security</span></h4>
         <div class="setting"><div><b style="font-weight:500">Session timeout</b><small>Signed out after 30 minutes without activity (warning at 25), and always after 12 hours</small></div><span class="pill p-ok">On</span></div>

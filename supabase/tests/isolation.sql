@@ -26,6 +26,8 @@ do $$ declare a uuid := (select v::uuid from iso where k = 'A'); mid uuid; cid u
   insert into evidence_cache(company_id, cache_key, evidence, roles, model, prompt_version) values (a, 'ISO-SECRET-A-key', '[]', '[]', 'iso', 'iso') on conflict do nothing;
   insert into template(company_id, kind, name, body) values (a, 'offer', 'ISO-SECRET-A template', 'ISO-SECRET-A body');
   insert into storage.objects(bucket_id, name) values ('cvs', a::text || '/ISO-SECRET-A.pdf') on conflict do nothing;
+  insert into desk_replay(company_id, prompt_key, reply) values (a, 'iso-secret-a', 'ISO-SECRET-A replay') on conflict do nothing;
+  insert into platform_alert(kind, company_id, detail) values ('ai_error', a, '{"note":"ISO-SECRET-A alert"}');
 end $$;
 insert into a_secret values ('ISO-SECRET-A');
 
@@ -213,7 +215,12 @@ insert into calls values
   ('grant_sample_access',           $c$grant_sample_access('founder@test.in')$c$),
   ('revoke_sample_access',          $c$revoke_sample_access('founder@test.in')$c$),
   ('is_platform_admin',             $c$is_platform_admin()$c$),
-  ('my_workspaces',                 $c$my_workspaces()$c$);
+  ('my_workspaces',                 $c$my_workspaces()$c$),
+  ('desk_replay_save',              $c$desk_replay_save('probe', 'probe reply')$c$),
+  ('desk_replay_get',               $c$desk_replay_get('probe')$c$),
+  ('raise_platform_alert',          $c$raise_platform_alert('ai_error', '{"probe":true}')$c$),
+  ('platform_alerts',               $c$platform_alerts(5)$c$),
+  ('desk_ai_context',               $c$desk_ai_context()$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);

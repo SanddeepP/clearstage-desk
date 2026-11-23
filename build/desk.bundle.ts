@@ -434,10 +434,7 @@ async function handleAction({ action, params = {}, rpc }) {
     return { reply: "Marked as contacted. The next best person moves into the top 10.", cards: [] };
   }
   if (action === "approve_reject_batch_preview") return { reply: "Approved. This is a preview: nothing was sent and no message was queued.", cards: [] };
-  if (action === "load_sample_data") {
-    await rpc("desk_load_sample_data");
-    return { reply: "Sample data loaded: 3 roles, 26 candidates, a joiner and a probation review.", cards: [] };
-  }
+  if (action === "load_sample_data") return { reply: "Sample data lives only in the sample company now. Ask Clearstage for demo access.", cards: [] };
   throw new Error("Unknown action");
 }
 function friendly(e) {
@@ -445,10 +442,146 @@ function friendly(e) {
   return m.replace(/^.*?ERROR:\s*/, "").slice(0, 300) || "Something went wrong";
 }
 
+// supabase/functions/_shared/ai.js
+var DEFAULT_MODEL = "gemini-3.5-flash-lite";
+var AI_MESSAGES = {
+  off: "AI is off for your workspace.",
+  busy: "Desk is busy, try again in a minute.",
+  credit: "AI credit for your workspace is used up for now. Clearstage has been alerted."
+};
+var AiError = class extends Error {
+  constructor(code, detail = "") {
+    super(AI_MESSAGES[code] ?? code);
+    this.code = code;
+    this.detail = detail;
+  }
+};
+function pickKey({ isSample, isQa = false, env }) {
+  const get = (k) => (typeof env === "function" ? env(k) : env?.[k]) || "";
+  if (isSample) {
+    if (isQa && get("GEMINI_API_KEY_QA")) return { key: get("GEMINI_API_KEY_QA"), tier: "free_qa" };
+    if (get("GEMINI_API_KEY")) return { key: get("GEMINI_API_KEY"), tier: "free" };
+    throw new AiError("off", "no free key");
+  }
+  if (get("GEMINI_API_KEY_PAID")) return { key: get("GEMINI_API_KEY_PAID"), tier: "paid" };
+  throw new AiError("off", "no paid key");
+}
+var KEEP = /* @__PURE__ */ new Set(["type", "description", "enum", "properties", "required", "items", "minimum", "maximum", "minItems", "maxItems", "nullable", "format"]);
+var FORMATS = /* @__PURE__ */ new Set(["enum", "date-time"]);
+function toGeminiSchema(s) {
+  if (Array.isArray(s)) return s.map(toGeminiSchema);
+  if (!s || typeof s !== "object") return s;
+  const out = {};
+  for (const [k, v] of Object.entries(s)) {
+    if (!KEEP.has(k)) continue;
+    if (k === "format" && !FORMATS.has(v)) continue;
+    if (k === "properties") out.properties = Object.fromEntries(Object.entries(v).map(([p, ps]) => [p, toGeminiSchema(ps)]));
+    else if (k === "items") out.items = toGeminiSchema(v);
+    else out[k] = v;
+  }
+  if (Array.isArray(out.type)) {
+    out.nullable = out.type.includes("null");
+    out.type = out.type.find((t) => t !== "null");
+  }
+  if (out.type) out.type = String(out.type).toUpperCase();
+  return out;
+}
+var blocks = (c) => typeof c === "string" ? [{ type: "text", text: c }] : Array.isArray(c) ? c : [];
+function toGemini(body) {
+  const names = {}, gids = {};
+  const contents = [];
+  for (const m of body.messages ?? []) {
+    const parts = [];
+    for (const b of blocks(m.content)) {
+      if (b.type === "text" && b.text) parts.push({ text: b.text, ...b._gsig ? { thoughtSignature: b._gsig } : {} });
+      else if (b.type === "tool_use") {
+        names[b.id] = b.name;
+        if (b._gid) gids[b.id] = b._gid;
+        parts.push({ functionCall: { name: b.name, args: b.input ?? {}, ...b._gid ? { id: b._gid } : {} }, ...b._gsig ? { thoughtSignature: b._gsig } : {} });
+      } else if (b.type === "tool_result") {
+        let resp;
+        try {
+          resp = JSON.parse(typeof b.content === "string" ? b.content : JSON.stringify(b.content));
+        } catch {
+          resp = b.content;
+        }
+        const response = b.is_error ? { error: String(b.content) } : resp && typeof resp === "object" && !Array.isArray(resp) ? resp : { result: resp };
+        parts.push({ functionResponse: { name: names[b.tool_use_id] ?? "tool", response, ...gids[b.tool_use_id] ? { id: gids[b.tool_use_id] } : {} } });
+      }
+    }
+    if (!parts.length) continue;
+    const role = m.role === "assistant" ? "model" : "user";
+    const last = contents.at(-1);
+    if (last && last.role === role) last.parts.push(...parts);
+    else contents.push({ role, parts });
+  }
+  const system = Array.isArray(body.system) ? body.system.map((b) => b.text).join("\n\n") : body.system;
+  const out = { contents, generationConfig: { maxOutputTokens: body.max_tokens ?? 1024, temperature: body.temperature ?? 0.2 } };
+  if (system) out.systemInstruction = { parts: [{ text: system }] };
+  if (body.tools?.length) {
+    out.tools = [{ functionDeclarations: body.tools.map((t) => ({ name: t.name, description: t.description, parameters: toGeminiSchema(t.input_schema) })) }];
+    out.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+  }
+  return out;
+}
+var seq = 0;
+function fromGemini(json2) {
+  const cand = json2?.candidates?.[0];
+  const content = [];
+  for (const p of cand?.content?.parts ?? []) {
+    if (p.thought) continue;
+    if (p.functionCall) content.push({
+      type: "tool_use",
+      id: `gc_${Date.now().toString(36)}_${seq++}`,
+      name: p.functionCall.name,
+      input: p.functionCall.args ?? {},
+      ...p.functionCall.id ? { _gid: p.functionCall.id } : {},
+      ...p.thoughtSignature ? { _gsig: p.thoughtSignature } : {}
+    });
+    else if (typeof p.text === "string" && p.text) content.push({ type: "text", text: p.text, ...p.thoughtSignature ? { _gsig: p.thoughtSignature } : {} });
+  }
+  const u = json2?.usageMetadata ?? {};
+  return {
+    content,
+    stop_reason: content.some((b) => b.type === "tool_use") ? "tool_use" : cand?.finishReason === "MAX_TOKENS" ? "max_tokens" : "end_turn",
+    usage: { input_tokens: u.promptTokenCount ?? 0, output_tokens: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0) }
+  };
+}
+function classify(status, text, tier) {
+  const t = String(text || "").toLowerCase();
+  const billing = /billing|quota|exhaust|credit|insufficient|prepay|balance/.test(t);
+  if (status === 429) return tier === "paid" && billing && !/per minute|rate limit/.test(t) ? "credit" : "busy";
+  if (status >= 500) return "busy";
+  if (status === 403 || status === 402) return tier === "paid" && billing ? "credit" : "off";
+  if (status === 400 && /api key|api_key_invalid|key not valid/.test(t)) return "off";
+  return null;
+}
+function geminiLLM({ key, tier, fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), base = "https://generativelanguage.googleapis.com/v1beta" }) {
+  return async (model, body) => {
+    const url = `${base}/models/${encodeURIComponent(model || DEFAULT_MODEL)}:generateContent`;
+    let last = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": key }, body: JSON.stringify(toGemini(body)) });
+      if (r.ok) return fromGemini(await r.json());
+      last = await r.text();
+      const code = classify(r.status, last, tier);
+      if (code === "credit" || code === "off") throw new AiError(code, `${r.status} ${last.slice(0, 200)}`);
+      if (code === "busy" && attempt < 2) {
+        await sleep(700 * (attempt + 1));
+        continue;
+      }
+      if (code === "busy") throw new AiError("busy", `${r.status} ${last.slice(0, 200)}`);
+      throw new Error(`AI model error ${r.status}: ${last.slice(0, 200)}`);
+    }
+    throw new AiError("busy", last.slice(0, 200));
+  };
+}
+var replayKey = (text) => String(text || "").toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+
 // supabase/functions/desk/index.ts
 var MODELS = {
-  route: Deno.env.get("DESK_MODEL_ROUTE") ?? "claude-haiku-5-5",
-  draft: Deno.env.get("DESK_MODEL_DRAFT") ?? "claude-sonnet-5-5"
+  route: Deno.env.get("DESK_MODEL_ROUTE") ?? DEFAULT_MODEL,
+  draft: Deno.env.get("DESK_MODEL_DRAFT") ?? DEFAULT_MODEL
 };
 var TOKEN_CAP = Number(Deno.env.get("DESK_MONTHLY_TOKEN_CAP") ?? 2e6);
 var ALLOWED = (Deno.env.get("DESK_ALLOWED_ORIGINS") ?? "https://desk.crovantapartner.com,http://localhost:8000,http://localhost:8765").split(",");
@@ -474,24 +607,7 @@ function cors(req) {
   };
 }
 var json = (req, body, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors(req), "Content-Type": "application/json" } });
-async function anthropic(model, body) {
-  const key = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!key) throw new Error("NOT_CONFIGURED");
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, ...body })
-    });
-    if (r.ok) return await r.json();
-    if (r.status === 429 || r.status >= 500) {
-      await new Promise((res) => setTimeout(res, 800 * (attempt + 1)));
-      continue;
-    }
-    throw new Error(`AI model error ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  }
-  throw new Error("The AI model is busy. Try again in a minute.");
-}
+var QA_EMAILS = (Deno.env.get("QA_EMAILS") ?? "").toLowerCase().split(",").map((e) => e.trim()).filter(Boolean);
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
   if (req.method !== "POST") return json(req, { error: "Use POST" }, 405);
@@ -515,8 +631,16 @@ Deno.serve(async (req) => {
   const action = body.action ?? "chat";
   try {
     if (action !== "chat") return json(req, await handleAction({ action, params: body.params, rpc }));
-    const { data: allowed } = await sb.rpc("desk_live_enabled");
-    if (allowed !== true) return json(req, { error: "The live Desk agent isn't switched on for your company yet. It's in a closed beta." }, 403);
+    const ctx = await rpc("desk_ai_context");
+    if (ctx?.desk_enabled !== true) return json(req, { error: "The live Desk agent isn't switched on for your company yet. It's in a closed beta." }, 403);
+    let pick;
+    try {
+      pick = pickKey({ isSample: ctx.is_sample === true, isQa: QA_EMAILS.includes(String(u.user.email ?? "").toLowerCase()), env: (k) => Deno.env.get(k) });
+    } catch (e) {
+      if (!ctx.is_sample) await sb.rpc("raise_platform_alert", { p_kind: "ai_key_missing", p_detail: { function: "desk" } });
+      return json(req, { reply: AI_MESSAGES.off, cards: [], blocked: "ai_off" });
+    }
+    const llm = geminiLLM({ key: pick.key, tier: pick.tier });
     const text = String(body.text ?? "").trim().slice(0, 4e3);
     if (!text) return json(req, { error: "Say something to Desk" }, 400);
     let convId = body.conversation_id;
@@ -531,30 +655,45 @@ Deno.serve(async (req) => {
     }
     const { data: past } = await sb.from("desk_message").select("role, content").eq("conversation_id", convId).order("id", { ascending: false }).limit(20);
     const history = trimHistory((past ?? []).reverse());
-    const out = await runTurn({ text, history, deps: {
-      llm: anthropic,
-      rpc,
-      models: MODELS,
-      tokenCap: TOKEN_CAP,
-      monthTokens: () => rpc("desk_month_tokens"),
-      logUsage: async ({ model, purpose, tools, usage }) => {
-        await sb.from("ai_usage").insert({
-          company_id: me.company_id,
-          conversation_id: convId,
-          model,
-          purpose,
-          tools,
-          input_tokens: usage?.input_tokens ?? 0,
-          output_tokens: usage?.output_tokens ?? 0
-        });
+    let out;
+    try {
+      out = await runTurn({ text, history, deps: {
+        llm,
+        rpc,
+        models: MODELS,
+        tokenCap: TOKEN_CAP,
+        monthTokens: () => rpc("desk_month_tokens"),
+        logUsage: async ({ model, purpose, tools, usage }) => {
+          await sb.from("ai_usage").insert({
+            company_id: me.company_id,
+            conversation_id: convId,
+            model,
+            purpose,
+            tools,
+            key_tier: pick.tier,
+            input_tokens: usage?.input_tokens ?? 0,
+            output_tokens: usage?.output_tokens ?? 0
+          });
+        }
+      } });
+    } catch (e) {
+      if (!(e instanceof AiError)) throw e;
+      if (e.code === "credit") {
+        await sb.rpc("raise_platform_alert", { p_kind: "ai_credit_exhausted", p_detail: { function: "desk", tier: pick.tier, detail: e.detail.slice(0, 200) } });
+        return json(req, { conversation_id: convId, reply: AI_MESSAGES.credit, cards: [], blocked: "ai_credit" });
       }
-    } });
+      if (e.code === "busy" && ctx.is_sample) {
+        const r = await rpc("desk_replay_get", { p_key: replayKey(text) });
+        if (r?.reply) return json(req, { conversation_id: convId, reply: `${r.reply} (replayed: Desk is busy right now)`, cards: r.cards ?? [], replayed: true });
+      }
+      return json(req, { conversation_id: convId, reply: e.code === "off" ? AI_MESSAGES.off : AI_MESSAGES.busy, cards: [], blocked: `ai_${e.code}` });
+    }
+    if (ctx.is_sample && out.reply && !out.blocked) await sb.rpc("desk_replay_save", { p_key: replayKey(text), p_reply: out.reply, p_cards: out.cards ?? [] });
     if (out.newMessages?.length) {
       await sb.from("desk_message").insert(out.newMessages.map((m) => ({ conversation_id: convId, company_id: me.company_id, role: m.role, content: m.content })));
     }
     return json(req, { conversation_id: convId, reply: out.reply, cards: out.cards, blocked: out.blocked ?? null });
   } catch (e) {
-    if (String(e?.message) === "NOT_CONFIGURED") return json(req, { error: "Desk's AI isn't connected yet. Add ANTHROPIC_API_KEY in Supabase secrets." }, 503);
     return json(req, { error: friendly(e) }, 400);
   }
 });

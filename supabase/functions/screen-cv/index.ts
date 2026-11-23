@@ -10,8 +10,10 @@ import mammoth from "npm:mammoth@1.8.0";
 import { cvText } from "../_shared/screening/cvtext.js";
 import { maskCv } from "../_shared/screening/mask.js";
 import { buildPrompt, verifyEvidence, cacheKey, PROMPT_VERSION } from "../_shared/screening/evidence.js";
+import { AiError, AI_MESSAGES, DEFAULT_MODEL, geminiLLM, pickKey } from "../_shared/ai.js";
 
-const MODEL = Deno.env.get("SCREEN_MODEL") ?? "claude-haiku-5-5";
+const MODEL = Deno.env.get("SCREEN_MODEL") ?? DEFAULT_MODEL;
+const QA_EMAILS = (Deno.env.get("QA_EMAILS") ?? "").toLowerCase().split(",").map(e => e.trim()).filter(Boolean);
 const ALLOWED = (Deno.env.get("DESK_ALLOWED_ORIGINS") ?? "https://desk.crovantapartner.com,http://localhost:8000,http://localhost:8765").split(",");
 const cors = (req: Request) => ({ "Access-Control-Allow-Origin": ALLOWED.includes(req.headers.get("origin") ?? "") ? req.headers.get("origin")! : ALLOWED[0],
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info", "Access-Control-Allow-Methods": "POST, OPTIONS", "Vary": "Origin" });
@@ -45,16 +47,14 @@ Deno.serve(async (req) => {
     let cached = await rpc("desk_cached_evidence", { p_key: key });
     if (!cached) {
       const prompt = buildPrompt(masked, req0);
-      const apiKey = Deno.env.get("ANTHROPIC_API_KEY"); if (!apiKey) throw new Error("NOT_CONFIGURED");
-      const r = await fetch("https://api.anthropic.com/v1/messages", { method: "POST",
-        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-        body: JSON.stringify({ model: MODEL, max_tokens: 1500, system: [{ type: "text", text: prompt.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: prompt.user }] }) });
-      if (!r.ok) throw new Error(`AI model error ${r.status}`);
-      const out = await r.json();
+      // Key by company (founder 23 Nov): sample company → free key; real company → paid key only, else AI is off.
+      const ctx = await rpc("desk_ai_context");
+      const pick = pickKey({ isSample: ctx?.is_sample === true, isQa: QA_EMAILS.includes(String(u.user.email ?? "").toLowerCase()), env: (k: string) => Deno.env.get(k) });
+      const out = await geminiLLM({ key: pick.key, tier: pick.tier })(MODEL, { max_tokens: 1500, system: prompt.system, messages: [{ role: "user", content: prompt.user }] });
       const { data: me } = await sb.rpc("current_member");
-      await sb.from("ai_usage").insert({ company_id: me.company_id, model: MODEL, purpose: "screen", tools: [PROMPT_VERSION, job.sha256.slice(0, 12)],
+      await sb.from("ai_usage").insert({ company_id: me.company_id, model: MODEL, purpose: "screen", tools: [PROMPT_VERSION, job.sha256.slice(0, 12)], key_tier: pick.tier,
         input_tokens: out.usage?.input_tokens ?? 0, output_tokens: out.usage?.output_tokens ?? 0 });
-      const v = verifyEvidence(out.content?.[0]?.text ?? "", masked, req0);
+      const v = verifyEvidence(out.content.filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("") ?? "", masked, req0);
       if (!v.ok) throw new Error("The AI reply wasn't in the required format");
       cached = { evidence: v.evidence, roles: v.roles };
       return json(req, await rpc("desk_save_screening", { p_job: job.job_id, p_readable: true, p_masked_text: masked, p_evidence: [...v.evidence, ...v.roles], p_cache_key: key, p_model: MODEL, p_prompt_version: PROMPT_VERSION }));
@@ -62,7 +62,9 @@ Deno.serve(async (req) => {
     return json(req, await rpc("desk_save_screening", { p_job: job.job_id, p_readable: true, p_masked_text: masked, p_evidence: [...cached.evidence, ...cached.roles] }));
   } catch (e) {
     const msg = String((e as Error)?.message ?? e);
+    if (e instanceof AiError && e.code === "credit") await sb.rpc("raise_platform_alert", { p_kind: "ai_credit_exhausted", p_detail: { function: "screen-cv", detail: e.detail.slice(0, 200) } });
+    if (e instanceof AiError && e.code === "off" && e.detail === "no paid key") await sb.rpc("raise_platform_alert", { p_kind: "ai_key_missing", p_detail: { function: "screen-cv" } });
     const r = await rpc("desk_fail_cv_job", { p_job: job.job_id, p_error: msg });
-    return json(req, { status: r.status, error: msg === "NOT_CONFIGURED" ? "AI isn't connected yet." : msg }, msg === "NOT_CONFIGURED" ? 503 : 200);
+    return json(req, { status: r.status, error: e instanceof AiError ? AI_MESSAGES[e.code] : msg }, 200);
   }
 });
