@@ -2,61 +2,10 @@
 // Run: serve the repo root (python3 -m http.server 8795), then node tests/browser/live-auth.cjs. Exits 1 on any FAIL.
 const BASE = process.env.BASE_URL || 'http://localhost:8795/';
 const { chromium } = require('playwright');
-const FAKE = `(() => {
-  const F = window.__fake; F.calls ||= []; F.loads = (F.loads || 0) + 1;
-  const b64 = o => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');
-  const token = () => 'h.' + b64({ sub: F.uid, session_id: 's1', amr: [{ method: 'otp', timestamp: Math.floor(F.signedInAt / 1000) }] }) + '.s';
-  let session = F.session ? { access_token: token(), user: { id: F.uid, email: F.email } } : null;
-  const listeners = [];
-  const res = (data, error = null) => Promise.resolve({ data, error });
-  function query(table) {
-    const q = { table, filters: {} };
-    const run = mode => {
-      F.calls.push({ table, filters: { ...q.filters }, mode });
-      if (table !== 'member') return res(mode === 'many' ? [] : null);
-      const rows = (F.members || []).filter(r => Object.entries(q.filters).every(([k, v]) => r[k] === v));
-      if (F.rlsStale) return res(mode === 'many' ? [] : null);
-      if (mode === 'maybeSingle' && rows.length > 1) return res(null, { message: 'JSON object requested, multiple (or no) rows returned', code: 'PGRST116' });
-      return res(mode === 'many' ? rows : rows[0] ?? null);
-    };
-    const api = { select: () => api, eq: (k, v) => { q.filters[k] = v; return api; }, order: () => api, limit: () => api, in: () => api,
-      maybeSingle: () => run('maybeSingle'), single: () => run('maybeSingle'), then: (a, b) => run('many').then(a, b) };
-    return api;
-  }
-  window.supabase = { createClient: () => ({
-    auth: {
-      getSession: () => res({ session }),
-      onAuthStateChange: fn => { listeners.push(fn); return { data: { subscription: { unsubscribe() {} } } }; },
-      signOut: () => { F.calls.push({ signOut: true }); session = null; listeners.forEach(l => l('SIGNED_OUT', null)); return res({}); },
-      signInWithOtp: () => res({}), verifyOtp: () => res({ user: { id: F.uid, email: F.email }, session }),
-    },
-    rpc: (name, args) => {
-      F.calls.push({ rpc: name, args });
-      if (name === 'session_fresh') return res(!F.rlsStale);
-      if (name === 'my_workspaces') return res(F.rlsStale ? [] : (F.workspaces || []));
-      if (name === 'is_platform_admin') return res(false);
-      if (name === 'create_company_for_me') return F.createError ? res(null, F.createError) : res('new-co');
-      if (name === 'my_company_region') return res(null);
-      return res(null);
-    },
-    from: query,
-    functions: { invoke: () => res({}) },
-  }) };
-})();`;
+const { FAKE, opener } = require('./fake.cjs');
 (async () => {
   const b = await chromium.launch(); let failed = 0; const ok = (c, m) => { if (!c) failed++; console.log((c ? 'PASS ' : 'FAIL ') + m); };
-  async function open(fake, { storage = {} } = {}) {
-    const ctx = await b.newContext({ timezoneId: 'Asia/Kolkata', viewport: { width: 1280, height: 900 } }); const p = await ctx.newPage();
-    const errs = []; p.on('pageerror', e => errs.push(e.message));
-    await p.addInitScript(([f, st]) => { window.__fake = f; try { for (const [k, v] of Object.entries(st)) localStorage.setItem(k, v); } catch {} }, [fake, storage]);
-    await p.route('**/supabase.min.js', r => r.fulfill({ contentType: 'text/javascript', body: FAKE }));
-    await p.route('**/config.js', r => r.fulfill({ contentType: 'text/javascript', body: 'export const SUPABASE_URL="https://fake.supabase.test", SUPABASE_ANON_KEY="sb_publishable_test", EMAIL_HAS_CODE=true;' }));
-    await p.route('https://fake.supabase.test/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fake.deskReply || { error: 'unexpected' }) }));
-    await p.goto(BASE); await p.waitForTimeout(1500);
-    const vis = async id => !(await p.isHidden('#' + id));
-    const calls = () => p.evaluate(() => window.__fake.calls);
-    return { p, ctx, errs, vis, calls };
-  }
+  const open = opener(b, BASE);
   const H = 3600e3, now = Date.now(), uid = 'u-founder';
   const own = { id: 'co-own', name: 'cccc', is_sample: false }, sample = { id: 'co-sample', name: 'Acme Fintech', is_sample: true };
   const mem = co => ({ user_id: uid, company_id: co.id, full_name: 'Founder', phone: null, app_role: 'owner',

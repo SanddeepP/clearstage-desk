@@ -27,6 +27,8 @@ do $$ declare a uuid := (select v::uuid from iso where k = 'A'); mid uuid; cid u
   insert into template(company_id, kind, name, body) values (a, 'offer', 'ISO-SECRET-A template', 'ISO-SECRET-A body');
   insert into storage.objects(bucket_id, name) values ('cvs', a::text || '/ISO-SECRET-A.pdf') on conflict do nothing;
   insert into desk_replay(company_id, prompt_key, reply) values (a, 'iso-secret-a', 'ISO-SECRET-A replay') on conflict do nothing;
+  insert into company_module(company_id, module, state) values (a, 'onboard', 'live') on conflict do nothing;
+  insert into module_interest(company_id, user_id, module, note) select a, user_id, 'exit', 'ISO-SECRET-A interest' from member where company_id = a limit 1 on conflict do nothing;
   insert into platform_alert(kind, company_id, detail) values ('ai_error', a, '{"note":"ISO-SECRET-A alert"}');
 end $$;
 insert into a_secret values ('ISO-SECRET-A');
@@ -232,11 +234,18 @@ insert into calls values
   ('desk_ai_context',               $c$desk_ai_context()$c$),
   ('sample_access_list',            $c$sample_access_list()$c$),
   ('save_manual_offer',             $c$save_manual_offer('{app}', '[{"name":"Base salary","amount":45000}]', 45000)$c$),
-  ('my_company_region',             $c$my_company_region()$c$);
+  ('my_company_region',             $c$my_company_region()$c$),
+  ('my_modules',                    $c$my_modules()$c$),
+  ('set_module_state',              $c$set_module_state('{A}', 'onboard', 'soon')$c$),
+  ('platform_companies',            $c$platform_companies()$c$),
+  ('register_module_interest',      $c$register_module_interest('payroll', 'probe', 'page')$c$),
+  ('my_module_interest',            $c$my_module_interest()$c$),
+  ('module_interest_counts',        $c$module_interest_counts()$c$),
+  ('update_my_name',                $c$update_my_name('Iso Probe')$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);
-insert into pure values ('ctc_breakup'), ('ctc_fix'), ('ctc_inputs'), ('wages_check'), ('rule_row'), ('rule_value'), ('has_statutory_pack'), ('desk_blocked_text'),
+insert into pure values ('ctc_breakup'), ('ctc_fix'), ('ctc_inputs'), ('wages_check'), ('rule_row'), ('rule_value'), ('has_statutory_pack'), ('module_keys'), ('module_default'), ('module_states_allowed'), ('looks_like_name'), ('desk_blocked_text'),
   ('scr_item_exists'), ('scr_norm'), ('scr_quote_names_term'), ('scr_weights_ok'), ('scr_years');
 grant select on pure to authenticated;
 

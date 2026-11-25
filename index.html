@@ -94,21 +94,29 @@
   <div class="strip" aria-live="polite">
     <a class="tile" id="t-roles" href="#hiring"><b>3</b> open roles</a>
     <a class="tile late" id="t-late" href="#today"><b>2</b> late tasks</a>
-    <a class="tile" id="t-join" href="#joiners"><b>1</b> joining this week</a>
-    <a class="tile" id="t-prob" href="#joiners"><b>1</b> probation due</a>
+    <a class="tile" id="t-join" href="#onboard"><b>1</b> joining this week</a>
+    <a class="tile" id="t-prob" href="#probation"><b>1</b> probation due</a>
     <a class="tile" id="t-queue" href="#today" hidden><b>0</b> waiting for approval</a>
   </div>
   <div class="body">
   <nav class="sidenav" aria-label="Sections">
     <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Overview</a>
     <a href="#desk" data-tab="desk"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Ask Desk<span class="n ai">AI</span></a>
-    <div class="grp">Work</div>
     <a href="#today" data-tab="today"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l2 2 4-4"/><rect x="4" y="4" width="16" height="16" rx="3"/></svg>Today<span class="n" id="n-today"></span></a>
-    <a href="#hiring" data-tab="hiring"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5h6v2"/></svg>Jobs<span class="n" id="n-hiring"></span></a>
-    <a href="#people" data-tab="people"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4.5a3.5 3.5 0 0 1 0 7M21 20c0-2.6-1.6-4.8-4-5.6"/></svg>Candidates<span class="n" id="n-people"></span></a>
-    <a href="#interviews" data-tab="interviews"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Interviews<span class="n" id="n-interviews"></span></a>
-    <a href="#joiners" data-tab="joiners"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4M12 17v4M5 12H3M21 12h-2"/><circle cx="12" cy="12" r="5"/></svg>Joiners &amp; probation<span class="n" id="n-joiners"></span></a>
-    <a href="#approvals" data-tab="approvals"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13l2 2 4-4"/></svg>Approvals<span class="n" id="n-approvals"></span></a>
+    <div class="grp" id="grp-lifecycle">Hire to exit</div>
+    <a href="#hiring" data-tab="hiring" data-mod="hire"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5h6v2"/></svg>Hire<span class="n" id="n-hiring"></span><span class="mtag" data-mtag="hire"></span></a>
+    <a class="sub" href="#people" data-tab="people">Candidates<span class="n" id="n-people"></span></a>
+    <a class="sub" href="#interviews" data-tab="interviews">Interviews<span class="n" id="n-interviews"></span></a>
+    <a class="sub" href="#approvals" data-tab="approvals">Approvals<span class="n" id="n-approvals"></span></a>
+    <a href="#onboard" data-tab="onboard" data-mod="onboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>Onboard<span class="n" id="n-onboard"></span><span class="mtag" data-mtag="onboard"></span></a>
+    <a href="#probation" data-tab="probation" data-mod="probation"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg>Probation<span class="n" id="n-probation"></span><span class="mtag" data-mtag="probation"></span></a>
+    <a href="#compliance" data-tab="compliance" data-mod="compliance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>Compliance<span class="mtag" data-mtag="compliance"></span></a>
+    <a href="#exit" data-tab="exit" data-mod="exit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Exit<span class="mtag" data-mtag="exit"></span></a>
+    <div class="grp" id="grp-manage">Manage</div>
+    <a href="#time" data-tab="time" data-mod="time"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Time &amp; attendance<span class="mtag" data-mtag="time"></span></a>
+    <a href="#payroll" data-tab="payroll" data-mod="payroll"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>Payroll<span class="mtag" data-mtag="payroll"></span></a>
+    <a href="#performance" data-tab="performance" data-mod="performance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19l5-6 4 3 7-9"/><path d="M15 7h5v5"/></svg>Performance<span class="mtag" data-mtag="performance"></span></a>
+    <a href="#policies" data-tab="policies" data-mod="policies"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 16h7"/></svg>Policies<span class="mtag" data-mtag="policies"></span></a>
     <div class="grp">Insights &amp; admin</div>
     <a href="#insights" data-tab="insights"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M11 20V5M17 20v-6M3 20h18"/></svg>Insights</a>
     <a href="#integrations" data-tab="integrations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg>Integrations</a>

@@ -5,6 +5,7 @@ import { createScreening } from "./screening-demo.js";
 import { demoDates } from "./lib/demodate.js";
 import { createSessionGuard, restoredState, MSG } from "./lib/session.js";
 import * as region from "./lib/region.js";
+import * as mods from "./lib/modules.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -117,6 +118,7 @@ $("#setupForm").addEventListener("submit", async e => {
   const name = $("#fullName").value.trim().split(/\s+/).map(cap).join(" "), company = $("#company").value.trim();
   const country = $("#country").value, timezone = $("#tz").value, rawPhone = $("#phone").value.trim();
   if (!name || !company) return err("#setupErr", "Add your first name and company name.");
+  if (!looksLikeName(name)) return err("#setupErr", "Enter your name as people know you, like “Ritu Sharma”.");
   if (!country) return err("#setupErr", "Choose your company's country.");
   if (!timezone) return err("#setupErr", "Choose your company's time zone.");
   const phone = region.toE164(rawPhone, country);
@@ -238,7 +240,8 @@ function stageCounts(rid) { const c = { Applied: 0, Screened: 0, Interview: 0, O
 /* =================== DESK =================== */
 const inner = $("#inner"), log = $("#log"), ph = $("#ph"), chipsEl = $("#chips");
 let mode = "solo", currentTab = "desk";
-const TABS = ["overview", "desk", "today", "hiring", "people", "interviews", "joiners", "approvals", "insights", "integrations", "settings"];
+const MOD_TABS = ["onboard", "probation", "compliance", "exit", "time", "payroll", "performance", "policies"];
+const TABS = ["overview", "desk", "today", "hiring", "people", "interviews", "approvals", ...MOD_TABS, "insights", "integrations", "settings"];
 const cap = w => w ? w.charAt(0).toUpperCase() + w.slice(1) : w;
 const first = () => cap((profile?.name || "there").trim().split(/\s+/)[0]);
 const phoneLabel = () => profile?.phone ? `you · ${profile.phone}` : "you";
@@ -272,7 +275,9 @@ function paint() {
   badge("#n-today", c.openTasks.length, plural(c.openTasks.length, "open task") + `, ${c.lateTasks.length} late`, c.lateTasks.length > 0);
   badge("#n-hiring", c.openRoles, plural(c.openRoles, "open role"));
   badge("#n-people", c.activeCands.length, plural(c.activeCands.length, "active candidate"));
-  badge("#n-joiners", c.joiners.length + c.probDue.length, `${plural(c.joiners.length, "joiner")}, ${plural(c.probDue.length, "probation review")} due`);
+  badge("#n-onboard", c.joiners.length, plural(c.joiners.length, "joiner"));
+  badge("#n-probation", c.probDue.length, `${plural(c.probDue.length, "probation review")} due`);
+  paintModules();
   const ivLate = D.interviews.filter(i => person(i.cand)?.late).length;
   badge("#n-interviews", D.interviews.length, plural(D.interviews.length, "interview") + (ivLate ? `, ${ivLate} with late feedback` : ""), ivLate > 0);
   badge("#n-approvals", D.pending.length, plural(D.pending.length, "approval") + " waiting", D.pending.length > 0);
@@ -496,7 +501,8 @@ const EMPTY = {
   hiring: ["No roles yet", "Create a role, then add candidates to it.", "newRole", "New role with Desk"],
   people: ["No candidates yet", "Candidates appear here once you add CVs to a role.", "uploadCvs", "Upload CVs"],
   interviews: ["No interviews yet", "Interviews appear here once candidates are scheduled.", null, null],
-  joiners: ["No joiners yet", "They appear here when an offer is accepted.", null, null],
+  onboard: ["No joiners yet", "They appear here when an offer is accepted.", null, null],
+  probation: ["No probation reviews yet", "They appear here once someone joins.", null, null],
   approvals: ["Nothing waiting for approval", "Drafts that need your approval appear here.", null, null],
   insights: ["No numbers yet", "Numbers appear once you have a role and candidates.", null, null],
 };
@@ -533,7 +539,10 @@ function sampleAccessCard() {
     ${ACCESS === null ? `<div class="c"><p class="note">Loading who has access…</p></div>` : rows || `<div class="c"><p class="note">Nobody has sample access yet.</p></div>`}</div>`;
 }
 async function loadWorkspaces() {
+  try { INTEREST = (await auth.myModuleInterest()) || {}; } catch { INTEREST = {}; }
   if (!auth.LIVE) { WS_LIST = [{ id: "sample", name: "Acme Fintech", is_sample: true }]; WS = WS_LIST[0]; return; }
+  try { MODS_OWN = mods.states(await auth.myModules()); } catch { MODS_OWN = mods.states(null); }
+  COMPANIES = null; MI_COUNTS = null; modNote = "";
   ACCESS = null; accessNote = "";
   try { ADMIN = await auth.isPlatformAdmin(); } catch { ADMIN = false; }
   try { WS_LIST = await auth.workspaces(); } catch { WS_LIST = []; }
@@ -845,6 +854,11 @@ async function liveTurn(t) {
 }
 
 function route(t) {
+  const mk = mods.moduleIntent(t);                        // module tabs: honest reply for anything not live, and the interest noted
+  if (mk) {
+    const st = curMods()[mk];
+    if (st !== "live" && !(isSample() && st === "preview")) { noteInterest(mk, null, "desk"); return later(() => say(esc(mods.notLiveReply(mk, st)))); }
+  }
   if (liveOn()) return liveTurn(t);
   if (!isSample()) return later(() => say(esc(AI_OFF)));      // a real workspace never gets the scripted sample replies
   if (SCR.route(t)) return;
@@ -917,6 +931,7 @@ $("#waClose").onclick = () => { $("#wa").classList.remove("open"); $("#waToggle"
 /* =================== CHECK VIEWS: read only; every action runs in Desk =================== */
 const V = { todayFilter: "All", hiringRole: null, q: "", type: "All", owner: "All", personId: null };
 function showTab() {
+  if (location.hash === "#joiners") { history.replaceState(null, "", "#onboard"); }   // the old "Joiners & probation" link
   const t = location.hash.slice(1);
   currentTab = TABS.includes(t) ? t : "overview";
   document.querySelectorAll(".sidenav a").forEach(a => a.dataset.tab === currentTab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
@@ -940,13 +955,146 @@ function ownerMatch(o) {
   return V.owner === "Others" ? !["Ritu", `${first()} (you)`].includes(n) : n === V.owner;
 }
 
+/* =================== MODULE TABS (spec RD-PM-Spec-Module-Tabs.md, CTO 25 Nov) =================== */
+// The state comes from the database for the user's own company (016); the sample company and the public demo use the defaults.
+let MODS_OWN = mods.states(null), INTEREST = {}, COMPANIES = null, MI_COUNTS = null, modNote = "", modBusy = false, ADMIN_CO = null;
+const curMods = () => (isSample() ? mods.states(null) : MODS_OWN);
+function paintModules() {
+  const st = curMods();
+  document.querySelectorAll("[data-mtag]").forEach(el => {
+    const s = st[el.dataset.mtag];
+    el.textContent = s === "preview" ? "Preview" : s === "soon" ? "Soon" : "";
+    el.title = s === "preview" ? "Preview: look around on sample data" : s === "soon" ? "Coming soon" : "";
+  });
+}
+/** Records "I need this" (page) or a Desk request for a module that isn't live. Never sends anything. */
+async function noteInterest(module, note, source = "page") {
+  try {
+    const r = await auth.registerModuleInterest(module, note, source);
+    INTEREST[module] = { created_at: r.created_at, note: r.note, source: r.source ?? source, company: r.company, by: r.by };
+  } catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); if (source === "page") throw e; }
+  if (MOD_TABS.includes(currentTab)) renderTab();
+}
+// Fixed sample rows for Preview pages in a real workspace (fictional people, same as the canvas frames). No dates in the product.
+const PREVIEW = {
+  joiners: [
+    { name: "Sneha Rao", roleTitle: "Product Designer", day1: "in 2 days", late: true, checklist: [{ t: "Documents uploaded, with consent", done: true }, { t: "Appointment letter", done: false }, { t: "Laptop and email", done: false }, { t: "Day 1 plan and buddy", done: true }] },
+    { name: "Kiran S.", roleTitle: "Backend Developer", day1: "after the offer is accepted", checklist: [{ t: "Documents uploaded, with consent", done: false }, { t: "Appointment letter", done: false }, { t: "Laptop and email", done: false }, { t: "Day 1 plan and buddy", done: false }] },
+  ],
+  probation: [
+    { name: "Priya Nair", roleTitle: "Customer Success Associate", probation: { ends: "in 12 days", manager: "Vikram", status: "Review due" } },
+    { name: "Rohan Mehta", roleTitle: "Operations Analyst", probation: { ends: "in 3 months", manager: "Meera", status: "On track" } },
+  ],
+};
+function joinersCard(list, actions) {
+  return `<div class="card"><h4><span class="kind">Joining soon</span>${actions ? "" : '<span class="pill p-mut">Sample data</span>'}</h4>${list.length ? list.map(j => {
+    const done = j.checklist.filter(c => c.done).length, miss = j.checklist.filter(c => !c.done).map(c => c.t);
+    const fixKey = actions ? (j.name === "Sneha Rao" ? (!j.checklist[1].done ? "letter" : !j.checklist[2].done ? "laptop" : null) : (!j.checklist[1].done ? "kiranLetter" : !j.checklist[2].done ? "kiranLaptop" : null)) : null;
+    return `<div class="item">${j.late ? '<span class="pill p-late">Late</span>' : ""}<div class="t"><b style="font-weight:500">${esc(j.name)}</b> · ${esc(j.roleTitle)}<small>Day 1: ${esc(j.day1)}${miss.length ? " · Missing: " + esc(miss.join(", ")) : " · All set"}</small></div>
+      <span class="prog"><i style="--p:${(done / j.checklist.length) * 100}%"></i>${done}/${j.checklist.length}</span>
+      ${fixKey && !task(fixKey)?.done ? `<button class="btn primary" type="button" data-v="task" data-key="${fixKey}">Fix with Desk</button>` : ""}</div>`; }).join("") : '<div class="emptyv">No one joining soon.</div>'}</div>`;
+}
+function probationCard(list, actions) {
+  return `<div class="card"><h4><span class="kind">Probation reviews</span>${actions ? "" : '<span class="pill p-mut">Sample data</span>'}</h4>${list.length ? list.map(p => `<div class="item"><div class="t"><b style="font-weight:500">${esc(p.name)}</b> · ${esc(p.roleTitle)}<small>Ends ${esc(p.probation.ends)} · manager ${esc(p.probation.manager)}</small></div>
+    <span class="pill ${p.probation.status === "Review due" ? "p-warn" : p.probation.status === "Confirmed" ? "p-ok" : "p-acc"}">${esc(p.probation.status)}</span>
+    ${actions && p.probation.status === "Review due" ? '<button class="btn primary" type="button" data-v="task" data-key="probation">Start with Desk</button>' : ""}</div>`).join("") : '<div class="emptyv">No probation reviews due.</div>'}</div>`;
+}
+function moduleView(k, head) {
+  const st = curMods()[k], m = mods.MODULES[k];
+  if ((k === "onboard" || k === "probation") && st !== "soon") {
+    const live = st === "live";
+    const real = !isSample();
+    const sample = real && !live;                                     // a real company in preview sees fixed sample rows, read-only
+    const list = k === "onboard" ? (sample ? PREVIEW.joiners : D.people.filter(p => p.type === "Joiner")) : (sample ? PREVIEW.probation : D.people.filter(p => p.probation));
+    if (live && real && !list.length) return head(m.name, m.line) + emptyState(k);
+    const banner = live ? "" : `<div class="previewban" role="note"><span class="mtagbig">Preview</span><div><b>${esc(mods.PREVIEW_BANNER)}</b><small>${k === "onboard" ? "Look around to see how onboarding will work. Real joiners can't be added yet." : "Look around to see how probation reviews will work. Real reviews can't be started yet."}</small></div></div>`;
+    const action = live ? "" : `<button class="btn" type="button" disabled>${k === "onboard" ? "Add a joiner" : "Start a review"} · when ${m.name} is live</button>`;
+    const handoff = k === "onboard"
+      ? "When a candidate accepts their offer in Hire, Onboard starts their checklist automatically. That's the handoff this module is being built around."
+      : "Probation reviews start from the joining date: the manager gets the review task before the end date, and the outcome letter is drafted for a person to approve.";
+    return banner + head(m.name, m.line, action) + (k === "onboard" ? joinersCard(list, !sample) : probationCard(list, !sample)) +
+      (live ? "" : `<div class="card"><div class="c"><div class="suggest" style="margin:0">${esc(handoff)}</div></div></div><p class="note">Preview: nothing here is saved or sent.</p>`);
+  }
+  return comingSoon(k);
+}
+function comingSoon(k) {
+  const m = mods.MODULES[k], got = INTEREST[k], co = got?.company || WS?.name || (isSample() ? "Acme Fintech" : profile?.company) || "your company";
+  const ask = got
+    ? `<div class="card needdone" role="status"><h4><span class="kind">Thanks, you'll hear from us first</span></h4><div class="c"><p>Recorded for ${esc(co)} by ${esc(first())}${got.note ? `, with your note: “${esc(got.note)}”` : ""}.</p></div></div>`
+    : `<div class="card"><h4><span class="kind">Need ${esc(m.name)} for your company?</span></h4><div class="c">
+        <p>Tell us, and we'll count it for ${esc(co)}. What clients ask for most is built first. No email is sent.</p>
+        <form class="needform" data-need="${k}" novalidate><label class="field" for="needNote">Anything we should know? (optional)<input id="needNote" maxlength="200" autocomplete="off" placeholder="For example: we have 3 exits a month"></label>
+        <button class="btn primary" type="submit">I need this</button></form>${modNote ? `<p class="note" role="status">${esc(modNote)}</p>` : ""}</div></div>`;
+  return `<div class="vhead"><div><h2>${esc(m.name)} <span class="mtagbig">Coming soon</span></h2><p>${esc(m.line)}</p></div></div>
+    <div class="cols"><div class="mainc">
+      <div class="card"><h4><span class="kind">What it will do</span></h4><div class="c"><ul class="does">${(m.does || []).map(d => `<li>${esc(d)}</li>`).join("")}</ul></div></div>
+      <div class="card"><h4><span class="kind">How it works with Desk</span></h4><div class="c"><blockquote class="deskq">“${esc(m.desk || "")}”</blockquote>
+        <p class="note" style="margin:8px 0 0">Until ${esc(m.name)} is live, Desk says: “${esc(mods.notLiveReply(k, "soon"))}”</p></div></div>
+    </div><div class="side">${ask}</div></div>
+    <p class="note">Clearstage · the AI HR teammate for one-person HR teams</p>`;
+}
+// QA-011: everyone can correct the name Clearstage shows for them.
+const looksLikeName = n => { const t = String(n || "").trim(), c = t.replace(/\s/g, "").toLowerCase();
+  return t.length >= 2 && t.length <= 80 && c.length >= 2 && /\p{L}/u.test(t) && !/^(.)\1+$/u.test(c) && !["test", "asdf", "qwerty", "name", "user", "admin", "na", "n/a", "none", "abc"].includes(t.toLowerCase()); };
+let nameNote = "";
+function nameCard() {
+  if (isSample() && !auth.LIVE) return "";                       // the public demo has no real person to rename
+  return `<div class="card" id="nameCard"><h4><span class="kind">Your name</span></h4>
+    <div class="c"><form class="row saform" id="nameForm" novalidate><input id="myName" value="${esc(profile?.name || "")}" maxlength="80" autocomplete="name" aria-label="Your name"><button class="btn" type="submit">Save</button></form>
+    <p class="note">Shown in Desk, on approvals (“Approved by …”) and in letters you sign.</p>${nameNote ? `<p class="note" role="status">${esc(nameNote)}</p>` : ""}</div></div>`;
+}
+async function saveName(v) {
+  const n = String(v || "").trim().replace(/\s+/g, " ");
+  if (!looksLikeName(n)) { nameNote = "Enter your name as people know you, like “Ritu Sharma”."; return renderTab(); }
+  try { const r = await auth.updateMyName(user, n); profile.name = r.full_name; nameNote = "Saved."; paint(); }
+  catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); nameNote = e.message; }
+  renderTab();
+}
+// Platform admin: Settings → Modules (switch a company's modules) and Insights → Module interest.
+async function refreshCompanies() { try { COMPANIES = await auth.platformCompanies(); } catch (e) { COMPANIES = []; modNote = e.message; } if (currentTab === "settings") renderTab(); }
+const ALLOWED = k => (k === "hire" ? ["live"] : k === "onboard" || k === "probation" ? ["soon", "preview", "live"] : ["soon"]);
+function modulesAdminCard() {
+  if (!ADMIN) return "";
+  if (COMPANIES === null) { refreshCompanies(); return `<div class="card"><h4><span class="kind">Modules</span><span class="pill p-mut">Clearstage only</span></h4><div class="c"><p class="note">Loading companies…</p></div></div>`; }
+  const co = COMPANIES.find(c => c.id === ADMIN_CO) || COMPANIES.find(c => !c.is_sample) || COMPANIES[0];
+  if (!co) return "";
+  ADMIN_CO = co.id;
+  const label = { live: "Live", preview: "Preview", soon: "Coming soon" };
+  return `<div class="card" id="modulesAdmin"><h4><span class="kind">Modules</span><span class="pill p-mut">Clearstage only</span></h4>
+    <div class="setting"><div><b style="font-weight:500">Company</b><small>Switch a module from Coming soon to Preview to Live without a release. Every change is logged in that company's audit.</small></div>
+      <select id="modCompany" aria-label="Company">${COMPANIES.map(c => `<option value="${c.id}" ${c.id === co.id ? "selected" : ""}>${esc(c.name)}${c.is_sample ? " (sample)" : ""}</option>`).join("")}</select></div>
+    ${mods.GROUPS.map(g => g.modules.map(k => `<div class="setting"><div><b style="font-weight:500">${esc(mods.MODULES[k].name)}</b><small>${esc(g.label)}</small></div>
+      <select data-modstate="${k}" aria-label="${esc(mods.MODULES[k].name)} state" ${ALLOWED(k).length < 2 ? "disabled" : ""}>${ALLOWED(k).map(s => `<option value="${s}" ${co.modules[k] === s ? "selected" : ""}>${label[s]}</option>`).join("")}</select></div>`).join("")).join("")}
+    ${modNote ? `<p class="note" role="status" style="padding:0 16px">${esc(modNote)}</p>` : ""}</div>`;
+}
+async function setModule(k, state) {
+  if (modBusy) return; modBusy = true;
+  try {
+    await auth.setModuleState(ADMIN_CO, k, state);
+    const co = COMPANIES.find(c => c.id === ADMIN_CO);
+    modNote = `${mods.MODULES[k].name} is now ${state === "soon" ? "Coming soon" : state === "preview" ? "Preview" : "Live"} for ${co?.name}.`;
+    if (profile?.companyId === ADMIN_CO) { MODS_OWN = mods.states(await auth.myModules()); paintModules(); }
+  } catch (e) { if (auth.isSessionExpired(e)) { modBusy = false; return endSession("expired"); } modNote = e.message; }
+  modBusy = false; COMPANIES = null; refreshCompanies();
+}
+function moduleInterestCard() {
+  if (!ADMIN) return "";
+  if (MI_COUNTS === null) { auth.moduleInterestCounts().then(r => { MI_COUNTS = r || []; if (currentTab === "insights") renderTab(); }).catch(() => { MI_COUNTS = []; }); return ""; }
+  return `<div class="card" id="moduleInterest"><h4><span class="kind">Module interest</span><span class="pill p-mut">Clearstage only</span></h4>
+    ${MI_COUNTS.length ? `<div class="tablewrap"><table class="mtable"><thead><tr><th scope="col">Module</th><th scope="col">People</th><th scope="col">Companies</th><th scope="col">From Desk</th><th scope="col">Latest notes</th></tr></thead><tbody>
+      ${MI_COUNTS.map(r => `<tr><th scope="row">${esc(mods.MODULES[r.module]?.name || r.module)}</th><td>${r.people}</td><td>${r.companies}</td><td>${r.from_desk}</td><td>${(r.notes || []).map(n => `<div>“${esc(n.note)}” <small>${esc(n.company)}</small></div>`).join("") || "—"}</td></tr>`).join("")}</tbody></table></div>`
+      : '<div class="c"><p class="note">No requests yet. Counts appear when someone taps “I need this” or asks Desk for a module that isn\'t live.</p></div>'}
+    <p class="note" style="padding:0 16px 12px">Real companies only. Used for the end-of-February and end-of-March reviews: build what clients ask for most.</p></div>`;
+}
+
 function renderTab() {
   const v = $("#view");
   const head = (h, p, act) => `<div class="vhead"><div><h2>${h}</h2><p>${p}</p></div>${act || ""}</div>`;
   let html = "";
+  if (MOD_TABS.includes(currentTab)) { v.innerHTML = `<div class="inner">${moduleView(currentTab, head)}</div>`; v.scrollTop = 0; return; }
   if (!isSample() && EMPTY[currentTab]) {
-    const titles = { overview: "Overview", today: "Today", hiring: "Jobs", people: "Candidates", interviews: "Interviews", joiners: "Joiners & probation", approvals: "Approvals", insights: "Insights" };
-    v.innerHTML = head(titles[currentTab], WS?.name ? esc(WS.name) : "Your company") + emptyState(currentTab);
+    const titles = { overview: "Overview", today: "Today", hiring: "Jobs", people: "Candidates", interviews: "Interviews", approvals: "Approvals", insights: "Insights" };
+    v.innerHTML = head(titles[currentTab], WS?.name ? esc(WS.name) : "Your company") + emptyState(currentTab) + (currentTab === "insights" ? moduleInterestCard() : "");
     return;
   }
   if (currentTab === "people" && V.personId) {
@@ -993,26 +1141,25 @@ function renderTab() {
       <div class="card"><div class="tablewrap"><table><tr><th>Name</th>${SCR.hasData() ? "<th>Stars</th>" : ""}<th>Type</th><th>Role</th><th>Where they are</th><th>Owner</th></tr>
       ${list.map(p => `<tr class="click" data-v="person" data-pid="${p.id}" tabindex="0"><td style="font-weight:500">${esc(p.name)}</td>${SCR.hasData() ? `<td style="text-align:left">${SCR.starsCell(p)}</td>` : ""}<td>${esc(p.type)}</td><td>${esc(roleOf(p.role)?.title || p.roleTitle || "")}</td><td><span class="pill ${wherePill(p)}">${esc(p.stage && p.type === "Candidate" ? p.stage + " · " : "")}${esc(p.where)}</span></td><td style="text-align:left">${esc(ownerName(p.owner))}</td></tr>`).join("") || '<tr><td colspan="5" class="emptyv">No one matches that search.</td></tr>'}
       </table></div></div><p class="note">${list.length} of ${D.people.length} people · sample data</p>`;
-  } else if (currentTab === "joiners") {
-    const js = D.people.filter(p => p.type === "Joiner"), ps = D.people.filter(p => p.probation);
-    html = head("Joiners & probation", "From offer accepted to confirmation") +
-      `<div class="card"><h4><span class="kind">Joining soon</span></h4>${js.length ? js.map(j => {
-        const done = j.checklist.filter(c => c.done).length, miss = j.checklist.filter(c => !c.done).map(c => c.t);
-        const fixKey = j.name === "Sneha Rao" ? (!j.checklist[1].done ? "letter" : !j.checklist[2].done ? "laptop" : null) : (!j.checklist[1].done ? "kiranLetter" : !j.checklist[2].done ? "kiranLaptop" : null);
-        return `<div class="item"><div class="t"><b style="font-weight:500">${esc(j.name)}</b> · ${esc(j.roleTitle)}<small>Day 1: ${esc(j.day1)}${miss.length ? " · Missing: " + esc(miss.join(", ")) : " · All set"}</small></div>
-          <span class="prog"><i style="--p:${(done / j.checklist.length) * 100}%"></i>${done}/${j.checklist.length}</span>
-          ${fixKey && !task(fixKey)?.done ? `<button class="btn primary" type="button" data-v="task" data-key="${fixKey}">Fix with Desk</button>` : ""}</div>`; }).join("") : '<div class="emptyv">No one joining soon.</div>'}</div>
-      <div class="card"><h4><span class="kind">Probation reviews</span></h4>${ps.map(p => `<div class="item"><div class="t"><b style="font-weight:500">${esc(p.name)}</b> · ${esc(p.roleTitle)}<small>Ends ${esc(p.probation.ends)} · manager ${esc(p.probation.manager)}</small></div>
-        <span class="pill ${p.probation.status === "Review due" ? "p-warn" : p.probation.status === "Confirmed" ? "p-ok" : "p-acc"}">${esc(p.probation.status)}</span>
-        ${p.probation.status === "Review due" ? '<button class="btn primary" type="button" data-v="task" data-key="probation">Start with Desk</button>' : ""}</div>`).join("")}</div>`;
   }
   html = html || extraView(head);
+  if (currentTab === "insights") html += moduleInterestCard();
   v.innerHTML = `<div class="inner">${html}</div>`;
   v.scrollTop = 0;
 }
 $("#view").addEventListener("submit", e => {
+  if (e.target.id === "nameForm") { e.preventDefault(); return saveName($("#myName")?.value); }
+  if (e.target.dataset?.need) {
+    e.preventDefault(); modNote = "";
+    const k = e.target.dataset.need, btn = e.target.querySelector("button"); btn.disabled = true;
+    return noteInterest(k, $("#needNote")?.value || null, "page").catch(x => { modNote = x.message; btn.disabled = false; renderTab(); });
+  }
   if (e.target.id !== "sampleGrantForm") return;
   e.preventDefault(); changeAccess("grant", $("#saEmail")?.value);
+});
+$("#view").addEventListener("change", e => {
+  if (e.target.id === "modCompany") { ADMIN_CO = e.target.value; modNote = ""; return renderTab(); }
+  if (e.target.dataset?.modstate) return setModule(e.target.dataset.modstate, e.target.value);
 });
 $("#view").addEventListener("click", e => {
   const b = e.target.closest("[data-v],[data-vf]"); if (!b) return;
@@ -1144,7 +1291,7 @@ function extraView(head) {
   }
   if (currentTab === "settings") {
     return head("Settings", isSample() ? "Acme Fintech · Hyderabad · sample company for this preview" : [WS?.name || profile?.company, WS?.city || profile?.city].filter(Boolean).join(" · ")) +
-      `${isSample() && auth.LIVE === false || (auth.LIVE && WS?.is_sample) ? `<div class="card" id="demoSettings"><h4><span class="kind">Demo</span><span class="pill p-mut">Demo accounts only</span></h4>
+      `${nameCard()}${isSample() && auth.LIVE === false || (auth.LIVE && WS?.is_sample) ? `<div class="card" id="demoSettings"><h4><span class="kind">Demo</span><span class="pill p-mut">Demo accounts only</span></h4>
         <div class="setting"><div><b style="font-weight:500">Team setup</b><small>${mode === "solo" ? "Solo: you own everything, and what you approve goes out straight away" : "Lead + juniors: you act as Ritu, a junior; anything reaching a candidate or employee needs the lead's approval"}</small></div>
         <div class="seg" role="group" aria-label="Team setup"><button type="button" data-v="mode" data-mode="solo" aria-pressed="${mode === "solo"}">Solo</button><button type="button" data-v="mode" data-mode="lead" aria-pressed="${mode === "lead"}">Lead + juniors</button></div></div>
         <div class="setting"><div><b style="font-weight:500">Restart demo</b><small>Puts every sample task, draft and approval back to the start</small></div><button class="btn" type="button" data-v="restart">Restart demo</button></div></div>` : ""}
@@ -1161,6 +1308,7 @@ function extraView(head) {
         <div class="setting"><div><b style="font-weight:500">Sample workspace</b><small>A separate workspace of fictional people for demos. It never mixes with your own data.</small></div>
           <span class="pill p-mut">Demo access is granted by Clearstage</span></div></div>
       ${sampleAccessCard()}
+      ${modulesAdminCard()}
       <div class="card"><h4><span class="kind">Security</span></h4>
         <div class="setting"><div><b style="font-weight:500">Session timeout</b><small>Signed out after 30 minutes without activity (warning at 25), and always after 12 hours</small></div><span class="pill p-ok">On</span></div>
         <div class="setting"><div><b style="font-weight:500">Sign out on all devices</b><small>Ends every session for your account, on every browser and phone</small></div><button class="btn" type="button" data-v="signOutAll">Sign out everywhere</button></div></div>

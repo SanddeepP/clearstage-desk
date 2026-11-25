@@ -94,6 +94,26 @@ export async function isPlatformAdmin() { if (!LIVE) return false; return (await
 export async function sampleAccessList() { return LIVE ? (await rpc("sample_access_list")) ?? [] : []; }
 export async function grantSampleAccess(email) { return rpc("grant_sample_access", { p_email: email }); }
 export async function revokeSampleAccess(email) { return rpc("revoke_sample_access", { p_email: email }); }
+/* Module tabs (016). Demo mode (signed out): defaults, and "I need this" stays in this browser only. */
+const demoInterest = () => { try { return JSON.parse(localStorage.getItem("cs:interest") || "{}"); } catch { return {}; } };
+export async function myModules() { return LIVE ? rpc("my_modules") : null; }
+export async function myModuleInterest() { return LIVE ? (await rpc("my_module_interest")) ?? {} : demoInterest(); }
+export async function registerModuleInterest(module, note, source = "page") {
+  if (LIVE) return rpc("register_module_interest", { p_module: module, p_note: note || null, p_source: source });
+  const all = demoInterest(), had = all[module];
+  all[module] = { created_at: had?.created_at ?? new Date().toISOString(), note: had?.note || (note || "").trim().slice(0, 200) || null, source: had?.source ?? source };
+  try { localStorage.setItem("cs:interest", JSON.stringify(all)); } catch { /* blocked */ }
+  return { module, ...all[module], new: !had, company: "Acme Fintech" };
+}
+export async function setModuleState(company, module, state) { return rpc("set_module_state", { p_company: company, p_module: module, p_state: state }); }
+export async function platformCompanies() { return LIVE ? (await rpc("platform_companies")) ?? [] : []; }
+export async function moduleInterestCounts() { return LIVE ? (await rpc("module_interest_counts")) ?? [] : []; }
+/** QA-011: people can correct their own name. */
+export async function updateMyName(user, name) {
+  if (LIVE) return rpc("update_my_name", { p_name: name });
+  const p = store.get("profile:" + user.email) || memProfile; if (p) { p.name = name; store.set("profile:" + user.email, p); }
+  return { full_name: name };
+}
 export async function callDesk(body) {
   if (!LIVE) throw new Error("The live Desk agent needs a signed-in account.");
   const c = await client();

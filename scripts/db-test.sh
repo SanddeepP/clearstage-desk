@@ -26,7 +26,7 @@ $P -f supabase/migrations/001_schema.sql
 $P -f supabase/migrations/002_scheduler.sql
 $P -f supabase/seed.sql
 for f in supabase/migrations/0*.sql; do case "$f" in *001_*|*002_*) continue;; esac; $P -f "$f"; $P -f "$f"; done
-for t in supabase/tests/desk_tools.sql supabase/tests/allowlist_c5.sql supabase/tests/statutory_rules.sql supabase/tests/screening.sql supabase/tests/session.sql supabase/tests/isolation.sql supabase/tests/sample_access.sql supabase/tests/global_ready.sql; do
+for t in supabase/tests/desk_tools.sql supabase/tests/allowlist_c5.sql supabase/tests/statutory_rules.sql supabase/tests/screening.sql supabase/tests/session.sql supabase/tests/isolation.sql supabase/tests/sample_access.sql supabase/tests/global_ready.sql supabase/tests/modules.sql; do
   last=$(psql -v ON_ERROR_STOP=1 -q -t -A -f "$t" | tail -1); echo "$last"
   case "$last" in *PASSED*) ;; *) echo "FAILED: $t"; exit 1;; esac
 done

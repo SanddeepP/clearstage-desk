@@ -6,7 +6,11 @@ set role authenticated;
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000001';
 select 'workspace' as step, create_company_for_me('Rycruit','Hyderabad','Sanddeep','+919876543210','lead_juniors','IN','IN-TG','Asia/Kolkata') is not null as ok;
 -- fixture: since 012 clients can't load sample data; the test loads it as the owner, for this test company
-reset role; select 'sample data (fixture)', desk_load_sample_data()->>'loaded'; set role authenticated;
+reset role; select 'sample data (fixture)', desk_load_sample_data()->>'loaded';
+-- 016: these tests run the full Hire → Onboard → Probation handoff, so Clearstage has switched both modules to live here
+insert into company_module(company_id, module, state) select id, m, 'live' from company, unnest(array['onboard','probation']) m where name = 'Rycruit'
+  on conflict (company_id, module) do update set state = 'live';
+set role authenticated;
 -- and a client can't
 do $$ begin perform desk_load_sample_data(); raise exception 'SHOULD HAVE FAILED'; exception when insufficient_privilege then raise notice 'client sample load refused'; end $$;
 select 'brief', (desk_get_brief()->>'open')::int as open, (desk_get_brief()->>'late')::int as late;

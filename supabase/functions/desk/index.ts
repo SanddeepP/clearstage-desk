@@ -10,6 +10,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.50.0";
 import { runTurn, handleAction, friendly } from "../_shared/agent.js";
 import { AiError, AI_MESSAGES, DEFAULT_MODEL, geminiLLM, pickKey, replayKey } from "../_shared/ai.js";
+import { moduleIntent, notLiveReply, states as moduleStates } from "../_shared/modules.js";
 
 const MODELS = {
   route: Deno.env.get("DESK_MODEL_ROUTE") ?? DEFAULT_MODEL,
@@ -80,6 +81,17 @@ Deno.serve(async (req) => {
 
     const text = String(body.text ?? "").trim().slice(0, 4000);
     if (!text) return json(req, { error: "Say something to Desk" }, 400);
+
+    // Module tabs (CTO 25 Nov): a request for a module that isn't live gets the honest reply and the interest is
+    // recorded; no AI call. The database refuses preview-module writes as well (016), whatever the model tries.
+    const mk = moduleIntent(text);
+    if (mk) {
+      const st = moduleStates(await rpc("my_modules"))[mk];
+      if (st !== "live" && !(ctx.is_sample === true && st === "preview")) {
+        try { await rpc("register_module_interest", { p_module: mk, p_note: null, p_source: "desk" }); } catch { /* never block the reply */ }
+        return json(req, { reply: notLiveReply(mk, st), cards: [], conversation_id: body.conversation_id ?? null, module: mk, blocked: `module_${st}` });
+      }
+    }
 
     // Conversation: reuse the member's own conversation or start one
     let convId = body.conversation_id;
