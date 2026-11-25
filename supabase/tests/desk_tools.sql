@@ -4,7 +4,7 @@
 insert into auth.users values ('aaaaaaaa-0000-4000-8000-000000000001','founder@test.in'), ('aaaaaaaa-0000-4000-8000-000000000002','junior@test.in');
 set role authenticated;
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000001';
-select 'workspace' as step, create_company_for_me('Rycruit','Hyderabad','Sanddeep','+919876543210','lead_juniors') is not null as ok;
+select 'workspace' as step, create_company_for_me('Rycruit','Hyderabad','Sanddeep','+919876543210','lead_juniors','IN','IN-TG','Asia/Kolkata') is not null as ok;
 -- fixture: since 012 clients can't load sample data; the test loads it as the owner, for this test company
 reset role; select 'sample data (fixture)', desk_load_sample_data()->>'loaded'; set role authenticated;
 -- and a client can't
@@ -64,7 +64,7 @@ reset role;
 insert into auth.users values ('bbbbbbbb-0000-4000-8000-000000000001','other@test.in');
 set role authenticated;
 set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
-select 'other co workspace', create_company_for_me('Other Co','Pune','Asha',null,'solo') is not null;
+select 'other co workspace', create_company_for_me('Other Co','Pune','Asha',null,'solo','IN','IN-MH','Asia/Kolkata') is not null;
 select 'other co sees roles', count(*) from role;
 select 'other co brief open', desk_get_brief()->>'open';
 select 'other co finds Arjun', jsonb_array_length(desk_find_people('Arjun'));

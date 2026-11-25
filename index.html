@@ -53,9 +53,14 @@
     <div><h1>Set up your workspace</h1><p class="lead">Takes a minute. You can change these later.</p></div>
     <label class="field" for="fullName">First name<input id="fullName" autocomplete="given-name" required><span class="hint">Desk uses this to greet you.</span></label>
     <label class="field" for="company">Company name<input id="company" autocomplete="organization" required></label>
-    <label class="field" for="city">City<input id="city" autocomplete="address-level2" value="Hyderabad"></label>
+    <label class="field" for="country">Country<select id="country" required><option value="">Choose a country</option></select>
+      <span class="hint" id="regionHint">Sets your currency, working week, holidays and statutory rules.</span></label>
+    <label class="field" for="region" id="regionField" hidden>State or region<select id="region"><option value="">Choose (optional)</option></select></label>
+    <label class="field" for="tz">Time zone<select id="tz" required><option value="">Choose a time zone</option></select>
+      <span class="hint">Reminders, deadlines and the working-hours clock follow this.</span></label>
+    <label class="field" for="city">City<input id="city" autocomplete="address-level2"></label>
     <label class="field" for="phone">WhatsApp number for approvals
-      <input id="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="+91 98765 43210">
+      <input id="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="With country code, like +91 98765 43210">
       <span class="hint">Desk sends you "approve this role or offer?" messages here. Reply YES to approve.</span>
     </label>
     <fieldset class="field" style="border:0;padding:0;margin:0">

@@ -9,8 +9,14 @@ declare
   r_backend uuid := gen_random_uuid(); r_ops uuid := gen_random_uuid(); r_cs uuid := gen_random_uuid();
   p uuid; a uuid; i uuid; n int;
 begin
-  insert into company(id, name, city, headcount, team_setup) values (co, 'Acme Fintech', 'Hyderabad', 42, 'solo')
-    on conflict (id) do nothing;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'company' and column_name = 'country') then
+    -- after 015 (e.g. a fresh production project): the sample company stays the India demo (CTO 25 Nov §4)
+    execute $q$insert into company(id, name, city, headcount, team_setup, country, state_region, timezone)
+      values ($1, 'Acme Fintech', 'Hyderabad', 42, 'solo', 'IN', 'IN-TG', 'Asia/Kolkata') on conflict (id) do nothing$q$ using co;
+  else
+    insert into company(id, name, city, headcount, team_setup) values (co, 'Acme Fintech', 'Hyderabad', 42, 'solo')
+      on conflict (id) do nothing;
+  end if;
 
   insert into member(id, company_id, full_name, title, app_role, phone, whatsapp_opt_in) values
     (rahul,  co, 'Rahul',  'Founder',            'approver', '+910000000001', true),

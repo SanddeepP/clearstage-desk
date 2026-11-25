@@ -111,7 +111,7 @@ end $$;
 
 -- 7. Founder QA (23 Nov): the platform admin with their own company grants themselves access → switcher shows both
 reset role;
-insert into company(id, name, city) values ('cccccccc-0000-4000-8000-00000000c0c0', 'Founder Co (fictional)', 'Hyderabad') on conflict do nothing;
+insert into company(id, name, city, country, state_region, timezone) values ('cccccccc-0000-4000-8000-00000000c0c0', 'Founder Co (fictional)', 'Hyderabad', 'IN', 'IN-TG', 'Asia/Kolkata') on conflict do nothing;
 insert into member(company_id, user_id, full_name, email, app_role) select 'cccccccc-0000-4000-8000-00000000c0c0', 'cccccccc-0000-4000-8000-0000000000ad', 'Founder', 'clearstage-admin@test.in', 'owner'
   where not exists (select 1 from member where user_id = 'cccccccc-0000-4000-8000-0000000000ad' and company_id = 'cccccccc-0000-4000-8000-00000000c0c0');
 set role authenticated;

@@ -48,7 +48,7 @@ do $$ declare n int; begin
   update person set full_name = full_name where true; get diagnostics n = row_count;
   if n <> 0 then raise exception 'FAILED: stale session updated % rows', n; end if; raise notice 'stale: update touched 0 rows';
 end $$;
-do $$ begin perform create_company_for_me('Stale Co', 'Hyderabad', 'Stale', null, 'solo'); raise exception 'SHOULD HAVE FAILED';
+do $$ begin perform create_company_for_me('Stale Co', 'Hyderabad', 'Stale', null, 'solo', 'IN', 'IN-TG', 'Asia/Kolkata'); raise exception 'SHOULD HAVE FAILED';
 exception when others then if sqlerrm like 'SHOULD%' then raise; end if;
   if sqlerrm not like 'Your session has expired%' then raise exception 'FAILED: create_company gave %', sqlerrm; end if; raise notice 'stale: create company refused'; end $$;
 

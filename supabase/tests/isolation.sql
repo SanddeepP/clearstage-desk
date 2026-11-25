@@ -148,6 +148,15 @@ do $$ declare n bigint; a uuid := (select v::uuid from iso where k = 'A'); begin
   exception when insufficient_privilege then null; when others then if sqlerrm like 'FAILED%' then raise; end if; end;
   begin update statutory_rule set value = value; get diagnostics n = row_count; if n <> 0 then raise exception 'FAILED: B changed statutory rules'; end if;
   exception when insufficient_privilege then null; end;
+  -- 015: the country and holiday reference tables are read-only; A's region fields can't be changed by B
+  begin update country set currency = currency; get diagnostics n = row_count; if n <> 0 then raise exception 'FAILED: B changed the country table'; end if;
+  exception when insufficient_privilege then null; end;
+  begin insert into holiday(calendar, day, name) values ('IN-TG', '2026-12-31', 'planted'); raise exception 'FAILED: B added a holiday';
+  exception when insufficient_privilege then null; when others then if sqlerrm like 'FAILED%' then raise; end if; end;
+  begin update company set timezone = 'Europe/London' where id = a; get diagnostics n = row_count; if n <> 0 then raise exception 'FAILED: B changed A''s time zone'; end if;
+  exception when insufficient_privilege then null; end;
+  begin update company set data_region = 'eu-west-2' where id = (select v::uuid from iso where k = 'B'); raise exception 'FAILED: a client changed its data region';
+  exception when others then if sqlerrm like 'FAILED%' then raise; end if; end;
 end $$;
 
 -- 3. Storage: A's folder is invisible and read-only to B; B's own folder works
@@ -209,7 +218,7 @@ insert into calls values
   ('my_member',                     $c$my_member('{A}')$c$),
   ('my_company_ids',                $c$(select array_agg(c) from my_company_ids() c)$c$),
   ('current_member',                $c$current_member()$c$),
-  ('create_company_for_me',         $c$create_company_for_me('Iso Second Co', 'Pune', 'Iso', null, 'solo')$c$),
+  ('create_company_for_me',         $c$create_company_for_me('Iso Second Co', 'Pune', 'Iso', null, 'solo', 'IN', 'IN-MH', 'Asia/Kolkata')$c$),
   ('session_fresh',                 $c$session_fresh()$c$),
   ('session_status',                $c$session_status()$c$),
   ('grant_sample_access',           $c$grant_sample_access('founder@test.in')$c$),
@@ -221,11 +230,13 @@ insert into calls values
   ('raise_platform_alert',          $c$raise_platform_alert('ai_error', '{"probe":true}')$c$),
   ('platform_alerts',               $c$platform_alerts(5)$c$),
   ('desk_ai_context',               $c$desk_ai_context()$c$),
-  ('sample_access_list',            $c$sample_access_list()$c$);
+  ('sample_access_list',            $c$sample_access_list()$c$),
+  ('save_manual_offer',             $c$save_manual_offer('{app}', '[{"name":"Base salary","amount":45000}]', 45000)$c$),
+  ('my_company_region',             $c$my_company_region()$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);
-insert into pure values ('ctc_breakup'), ('ctc_fix'), ('ctc_inputs'), ('wages_check'), ('rule_row'), ('rule_value'), ('desk_blocked_text'),
+insert into pure values ('ctc_breakup'), ('ctc_fix'), ('ctc_inputs'), ('wages_check'), ('rule_row'), ('rule_value'), ('has_statutory_pack'), ('desk_blocked_text'),
   ('scr_item_exists'), ('scr_norm'), ('scr_quote_names_term'), ('scr_weights_ok'), ('scr_years');
 grant select on pure to authenticated;
 

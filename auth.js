@@ -129,7 +129,8 @@ export async function getProfile(user) {
 export async function saveProfile(user, p) {
   if (LIVE) {
     const c = await client();
-    const { error } = await c.rpc("create_company_for_me", { p_company: p.company, p_city: p.city, p_full_name: p.name, p_phone: p.phone || null, p_setup: p.setup });
+    const { error } = await c.rpc("create_company_for_me", { p_company: p.company, p_city: p.city, p_full_name: p.name, p_phone: p.phone || null, p_setup: p.setup,
+      p_country: p.country, p_region: p.region || null, p_timezone: p.timezone });
     if (error) throw new Error(friendly(error));
     return p;
   }

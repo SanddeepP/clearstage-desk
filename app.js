@@ -4,6 +4,7 @@ import { parseHire, fmtBudget } from "./lib/intent.js";
 import { createScreening } from "./screening-demo.js";
 import { demoDates } from "./lib/demodate.js";
 import { createSessionGuard, MSG } from "./lib/session.js";
+import * as region from "./lib/region.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -70,17 +71,37 @@ $("#codeForm").addEventListener("submit", async e => {
 
 async function afterSignIn() {
   profile = await auth.getProfile(user);
-  if (!profile) { show("s-setup"); $("#fullName").focus(); return; }
+  if (!profile) { show("s-setup"); fillRegionForm(); $("#fullName").focus(); return; }
   openApp();
 }
 
+// Company region (CTO 25 Nov): country and time zone are required, suggested from the browser's time zone.
+function fillRegionForm() {
+  const btz = region.browserTimeZone(), sug = region.suggest(btz);
+  const cSel = $("#country");
+  if (cSel.options.length <= 1) cSel.insertAdjacentHTML("beforeend", region.COUNTRIES.map(c => `<option value="${c.code}">${esc(c.name)}</option>`).join(""));
+  if (!cSel.value && sug.country) cSel.value = sug.country;
+  const sync = () => {
+    const c = region.country(cSel.value);
+    $("#regionField").hidden = !c?.regions.length;
+    $("#region").innerHTML = `<option value="">Choose (optional)</option>` + (c?.regions || []).map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join("");
+    const zones = region.zonesFor(cSel.value, btz);
+    $("#tz").innerHTML = (zones.length === 1 ? "" : `<option value="">Choose a time zone</option>`) + zones.map(z => `<option value="${z}">${esc(z.replace(/_/g, " "))}</option>`).join("");
+    if (zones.length > 1 && zones[0] === (region.suggest(btz).timezone || "")) $("#tz").value = zones[0];
+  };
+  cSel.onchange = sync; sync();
+}
 $("#setupForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#setupErr");
   const name = $("#fullName").value.trim().split(/\s+/).map(cap).join(" "), company = $("#company").value.trim();
-  const phone = $("#phone").value.replace(/[\s-]/g, "");
+  const country = $("#country").value, timezone = $("#tz").value, rawPhone = $("#phone").value.trim();
   if (!name || !company) return err("#setupErr", "Add your first name and company name.");
-  if (phone && !/^\+?\d{10,13}$/.test(phone)) return err("#setupErr", "Enter the WhatsApp number with country code, like +91 98765 43210.");
-  const p = { name, company, city: $("#city").value.trim(), phone: phone ? (phone.startsWith("+") ? phone : "+91" + phone.slice(-10)) : "", setup: document.querySelector("input[name=setup]:checked").value };
+  if (!country) return err("#setupErr", "Choose your company's country.");
+  if (!timezone) return err("#setupErr", "Choose your company's time zone.");
+  const phone = region.toE164(rawPhone, country);
+  if (rawPhone && !phone) return err("#setupErr", "Enter the WhatsApp number with its country code, like +" + (region.country(country)?.dial || "91") + " and the number.");
+  const p = { name, company, city: $("#city").value.trim(), phone, setup: document.querySelector("input[name=setup]:checked").value,
+    country, region: $("#region").value || "", timezone };
   const btn = $("#setupBtn"); busy(btn, true, "Setting up…");
   try { profile = await auth.saveProfile(user, p); openApp(); }
   catch (x) { err("#setupErr", x.message); }

@@ -12,7 +12,7 @@ reset role;
 insert into auth.users values ('cccccccc-0000-4000-8000-000000000001','new@test.in');
 set role authenticated;
 set request.jwt.claim.sub = 'cccccccc-0000-4000-8000-000000000001';
-select 'sign-up via setup', create_company_for_me('Sneaky Co','Pune','Ravi',null,'solo') is not null;
+select 'sign-up via setup', create_company_for_me('Sneaky Co','Pune','Ravi',null,'solo','IN','IN-MH','Asia/Kolkata') is not null;
 select 'sign-up still off', desk_live_enabled() = false;
 -- Clearstage (service role / SQL editor) switches it on
 reset role;
