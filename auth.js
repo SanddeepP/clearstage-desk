@@ -219,6 +219,8 @@ export function codeError(err, sentAt, now = Date.now()) {
 function friendly(err) {
   const m = (err && err.message) || "";
   if (isSessionExpired(err)) return SESSION_EXPIRED;          // before the code-expired wording below
+  const wait = m.match(/only request this after (\d+) seconds?/i);   // Supabase's 60-second resend cooldown
+  if (wait) return `We just sent you a code. Use that one, or ask for a new code in ${wait[1]} seconds.`;
   if (/rate limit|too many/i.test(m)) return "Too many codes requested. Wait a minute, then try again.";
   if (/expired|invalid/i.test(m)) return CODE_EXPIRED;
   if (/signups? not allowed|disabled/i.test(m)) return "New sign-ups are switched off for this workspace. Ask the admin to invite you.";

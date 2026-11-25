@@ -3,7 +3,7 @@ import { ctcBreakup, fixBasic, formatINR, PF_CITATION } from "./lib/ctc.js";
 import { parseHire, fmtBudget } from "./lib/intent.js";
 import { createScreening } from "./screening-demo.js";
 import { demoDates } from "./lib/demodate.js";
-import { createSessionGuard, restoredState, MSG } from "./lib/session.js";
+import { createSessionGuard, restoredState, MSG, SESSION_KEYS } from "./lib/session.js";
 import * as region from "./lib/region.js";
 import * as mods from "./lib/modules.js";
 
@@ -20,7 +20,7 @@ let pendingEmail = "", user = null, profile = null, resendTimer = null;
 $("#modeNote").textContent = auth.LIVE
   ? "Can't find the email? Check Spam or Gmail's Updates tab."
   : "Demo mode: email sending isn't connected yet, so your code appears on the next screen.";
-if (auth.LIVE) auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden || resuming) return; await resume(u); });
+if (auth.LIVE) auth.onSignedIn(async u => { if (verifying || freshSignIn || !$("#s-app").hidden || !$("#s-setup").hidden || resuming) return; await resume(u); });
 
 $("#emailForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#emailErr");
@@ -65,14 +65,23 @@ codeEl.addEventListener("input", () => {
 $("#codeForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#codeErr");
   const btn = $("#verifyBtn"); busy(btn, true, "Checking…");
-  try { user = await auth.verifyCode(pendingEmail, $("#code").value); freshSignIn = true; await afterSignIn(); }
+  // A code sign-in is a NEW session: Supabase fires SIGNED_IN before verifyCode returns, and that event must not
+  // take the restored-session path, which judged it on the old session's activity and signed it out (bug 25 Nov 15:58).
+  verifying = true;
+  try {
+    user = await auth.verifyCode(pendingEmail, $("#code").value);
+    freshSignIn = true; markFreshSession();
+    await afterSignIn();
+  }
   catch (x) { err("#codeErr", x.message); }
-  finally { busy(btn, false, "Verify and sign in"); }
+  finally { verifying = false; busy(btn, false, "Verify and sign in"); }
 });
 
 /** A session restored from storage (page load, another tab): refuse it before loading anything if it is past
  *  12 hours or idle for 30 minutes (bug 25 Nov: an expired session used to land on "Set up your workspace"). */
-let resuming = false;
+let resuming = false, verifying = false;
+/** A new sign-in starts the clocks again: the previous session's activity and sign-in times must not judge it. */
+function markFreshSession() { try { const t = String(Date.now()); localStorage.setItem(SESSION_KEYS.act, t); localStorage.setItem(SESSION_KEYS.start, t); } catch { /* blocked */ } }
 async function resume(u) {
   if (resuming) return; resuming = true;
   try {

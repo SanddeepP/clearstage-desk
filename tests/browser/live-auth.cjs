@@ -66,6 +66,26 @@ const { FAKE, opener } = require('./fake.cjs');
   ok(await t.vis('s-email') && (await t.p.textContent('#signedOutNote')).includes('Your session has expired'), '1e. expired on a Desk call → sign-in screen with the message');
   ok((await t.p.evaluate(() => sessionStorage.getItem('cs:draft'))) === 'Who is late on feedback?', '1e. the typed question is kept for after sign-in');
   ok(!t.errs.length, '   no page errors ' + t.errs.join(' | ')); await t.ctx.close();
+  // 4. Sign in with a code while a stale last-activity time from an earlier session is stored (founder, 25 Nov 15:58):
+  //    must land in the app, never be signed out as idle/expired by the SIGNED_IN event racing the code path.
+  t = await open({ session: false, uid, email: 'founder@example.com', signedInAt: now - 30 * H, workspaces: [own], members: [mem(own)] },
+    { storage: { 'cs:act': String(now - 5 * H), 'cs:signin': String(now - 30 * H) } });
+  await t.p.fill('#email', 'founder@example.com'); await t.p.click('#sendBtn');
+  await t.p.waitForSelector('#s-code:not([hidden])'); await t.p.fill('#code', '123456'); if (await t.p.isVisible('#verifyBtn')) await t.p.click('#verifyBtn');
+  await t.p.waitForTimeout(1500);
+  c = await t.calls();
+  ok(await t.vis('s-app'), '4. code sign-in with stale stored activity → app opens');
+  ok(!c.some(x => x.signOut), '4. the new session is not signed out by the SIGNED_IN event');
+  ok(await t.p.isHidden('#signedOutNote'), '4. no "expired" or "idle" note: ' + (await t.p.textContent('#signedOutNote')));
+  await t.ctx.close();
+
+  // 5. Asking for a second code within 60 s: a plain message, not Supabase's wording
+  t = await open({ session: false, uid, email: 'founder@example.com', signedInAt: now, workspaces: [own], members: [mem(own)],
+    otpError: { message: 'For security purposes, you can only request this after 38 seconds.', status: 429 } });
+  await t.p.fill('#email', 'founder@example.com'); await t.p.click('#sendBtn'); await t.p.waitForTimeout(600);
+  const em = await t.p.evaluate(() => [...document.querySelectorAll('#s-email [role=alert], #s-email .err, #emailErr')].map(e => e.textContent).join(' '));
+  ok(/38 seconds/.test(em) && !/For security purposes/.test(em), '5. resend cooldown in plain words: ' + em.trim());
+  await t.ctx.close();
   await b.close();
   console.log(failed ? `${failed} FAILED` : 'LIVE SIGN-IN CHECKS PASSED'); process.exit(failed ? 1 : 0);
 })();

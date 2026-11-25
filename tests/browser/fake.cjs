@@ -25,7 +25,12 @@ module.exports.FAKE = `(() => {
       getSession: () => res({ session }),
       onAuthStateChange: fn => { listeners.push(fn); return { data: { subscription: { unsubscribe() {} } } }; },
       signOut: () => { F.calls.push({ signOut: true }); session = null; listeners.forEach(l => l('SIGNED_OUT', null)); return res({}); },
-      signInWithOtp: () => res({}), verifyOtp: () => res({ user: { id: F.uid, email: F.email }, session }),
+      signInWithOtp: () => { F.calls.push({ otp: true }); return F.otpError ? res(null, F.otpError) : res({}); },
+      verifyOtp: () => {                                   // like supabase-js: a new session, then SIGNED_IN fires before verifyOtp returns
+        F.calls.push({ verify: true }); F.signedInAt = Date.now(); session = { access_token: token(), user: { id: F.uid, email: F.email } }; F.stale = false; F.rlsStale = false;
+        listeners.forEach(l => l('SIGNED_IN', session));
+        return res({ user: session.user, session });
+      },
     },
     rpc: (name, args) => {
       F.calls.push({ rpc: name, args });
