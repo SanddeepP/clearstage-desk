@@ -3,7 +3,7 @@ import { ctcBreakup, fixBasic, formatINR, PF_CITATION } from "./lib/ctc.js";
 import { parseHire, fmtBudget } from "./lib/intent.js";
 import { createScreening } from "./screening-demo.js";
 import { demoDates } from "./lib/demodate.js";
-import { createSessionGuard, MSG } from "./lib/session.js";
+import { createSessionGuard, restoredState, MSG } from "./lib/session.js";
 import * as region from "./lib/region.js";
 
 const $ = s => document.querySelector(s);
@@ -19,7 +19,7 @@ let pendingEmail = "", user = null, profile = null, resendTimer = null;
 $("#modeNote").textContent = auth.LIVE
   ? "Can't find the email? Check Spam or Gmail's Updates tab."
   : "Demo mode: email sending isn't connected yet, so your code appears on the next screen.";
-if (auth.LIVE) auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden) return; user = u; await afterSignIn(); });
+if (auth.LIVE) auth.onSignedIn(async u => { if (!$("#s-app").hidden || !$("#s-setup").hidden || resuming) return; await resume(u); });
 
 $("#emailForm").addEventListener("submit", async e => {
   e.preventDefault(); err("#emailErr");
@@ -69,11 +69,32 @@ $("#codeForm").addEventListener("submit", async e => {
   finally { busy(btn, false, "Verify and sign in"); }
 });
 
+/** A session restored from storage (page load, another tab): refuse it before loading anything if it is past
+ *  12 hours or idle for 30 minutes (bug 25 Nov: an expired session used to land on "Set up your workspace"). */
+let resuming = false;
+async function resume(u) {
+  if (resuming) return; resuming = true;
+  try {
+    const st = restoredState(await auth.sessionSignedInAt().catch(() => null));
+    if (st === "max" || st === "idle") return signOutNow(st);
+    user = u; await afterSignIn();
+  } finally { resuming = false; }
+}
 async function afterSignIn() {
-  profile = await auth.getProfile(user);
-  if (!profile) { show("s-setup"); fillRegionForm(); $("#fullName").focus(); return; }
+  try { profile = await auth.getProfile(user); }
+  catch (e) { if (auth.isSessionExpired(e)) return signOutNow("expired"); throw e; }
+  if (!profile) { showSetup(); return; }
   openApp();
 }
+function showSetup() {
+  show("s-setup"); fillRegionForm();
+  $("#setupEmail").textContent = user?.email || "";
+  $("#signedOutNote").hidden = true;
+  const fresh = freshSignIn; freshSignIn = false;           // the timeout also runs on the setup screen
+  auth.sessionSignedInAt().then(t => guard.start(t ?? undefined, { fresh })).catch(() => guard.start(undefined, { fresh }));
+  $("#fullName").focus();
+}
+$("#setupSignOut").addEventListener("click", () => guard.active ? guard.signedOut() : signOutNow("manual"));
 
 // Company region (CTO 25 Nov): country and time zone are required, suggested from the browser's time zone.
 function fillRegionForm() {
@@ -104,7 +125,7 @@ $("#setupForm").addEventListener("submit", async e => {
     country, region: $("#region").value || "", timezone };
   const btn = $("#setupBtn"); busy(btn, true, "Setting up…");
   try { profile = await auth.saveProfile(user, p); openApp(); }
-  catch (x) { err("#setupErr", x.message); }
+  catch (x) { if (auth.isSessionExpired(x)) return signOutNow("expired"); err("#setupErr", x.message); }
   finally { busy(btn, false, "Open Desk"); }
 });
 
@@ -116,22 +137,27 @@ const guard = createSessionGuard({
   onClearWarn: () => { $("#idleWarn").hidden = true; },
   onTimeout: reason => endSession(reason),
 });
-function keepDraft() { const q = $("#q")?.value.trim(); if (q) try { sessionStorage.setItem("cs:draft", q); } catch { /* blocked */ } }
+function keepDraft(text) { const q = (text ?? $("#q")?.value ?? "").trim(); if (q) try { sessionStorage.setItem("cs:draft", q); } catch { /* blocked */ } }
 function restoreDraft() { try { const d = sessionStorage.getItem("cs:draft"); if (d && $("#q")) { $("#q").value = d; sessionStorage.removeItem("cs:draft"); } } catch { /* blocked */ } }
 let ending = false;
 async function endSession(reason) {
-  if (ending || ($("#s-app").hidden && $("#s-setup").hidden)) return;   // already signing out, or Supabase echoed our own sign-out
+  if ($("#s-app").hidden && $("#s-setup").hidden) return;   // Supabase echoed our own sign-out
+  return signOutNow(reason);
+}
+/** Signs out from wherever we are (also before any screen is shown, on page load). */
+async function signOutNow(reason) {
+  if (ending) return;
   ending = true;
   try { await finishSignOut(reason); } finally { ending = false; }
 }
 async function finishSignOut(reason) {
   guard.stop();
   $("#idleWarn").hidden = true;
-  if (reason === "idle" || reason === "max") keepDraft();            // unsaved Ask Desk text comes back after sign-in
+  if (reason === "idle" || reason === "max") keepDraft();            // unsaved Ask Desk text comes back after sign-in (an expired Desk call keeps its own)
   const scope = signOutScope; signOutScope = "local";
   try { await auth.signOut(scope); } catch { /* still leave the app */ }
   user = null; profile = null; $("#email").value = "";
-  const msg = { idle: MSG.idle, max: MSG.max, elsewhere: MSG.elsewhere }[reason] ?? (scope === "global" ? "Signed out on all devices." : "");
+  const msg = { idle: MSG.idle, max: MSG.max, elsewhere: MSG.elsewhere, expired: auth.SESSION_EXPIRED }[reason] ?? (scope === "global" ? "Signed out on all devices." : "");
   const n = $("#signedOutNote"); n.textContent = msg; n.hidden = !msg;
   show("s-email");
 }
@@ -808,14 +834,14 @@ function showLive(out) {
   d.querySelectorAll("[data-live]").forEach(b => b.onclick = async () => {
     const card = b.closest(".card"); card?.querySelectorAll("button").forEach(x => x.disabled = true);
     const req = JSON.parse(b.dataset.live);
-    try { const out = await auth.callDesk(req); if (req.action === "approve" && out.approved_by) ink(card, out.approved_by, out.approved_at || Date.now()); showLive(out); } catch (e) { say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
+    try { const out = await auth.callDesk(req); if (req.action === "approve" && out.approved_by) ink(card, out.approved_by, out.approved_at || Date.now()); showLive(out); } catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
   });
   d.querySelectorAll("[data-say]").forEach(b => b.onclick = () => { me(b.dataset.say); liveTurn(b.dataset.say); });
 }
 async function liveTurn(t) {
   const wait = desk('<div class="bubble"><span class="note">Desk is working on it…</span></div>');
   try { const out = await auth.callDesk({ action: "chat", text: t, conversation_id: liveConv }); liveConv = out.conversation_id; wait.remove(); showLive(out); }
-  catch (e) { wait.remove(); say(`${esc(e.message)} You can switch the live agent off in Settings to use the preview.`); }
+  catch (e) { wait.remove(); if (auth.isSessionExpired(e)) { keepDraft(t); return endSession("expired"); } say(`${esc(e.message)} You can switch the live agent off in Settings to use the preview.`); }
 }
 
 function route(t) {
@@ -1151,6 +1177,7 @@ function extraView(head) {
 
 /* =================== START =================== */
 (async () => {
-  try { user = await auth.currentUser(); if (user) return afterSignIn(); } catch { /* fall through to sign-in */ }
+  try { const u = await auth.currentUser(); if (u) return await resume(u); } catch { /* fall through to sign-in */ }
+  if (!$("#s-app").hidden || !$("#s-setup").hidden) return;
   show("s-email");
 })();

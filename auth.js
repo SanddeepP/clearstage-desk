@@ -17,10 +17,10 @@ function loadScript(src) {
 
 async function client() {
   if (!LIVE) return null;
-  if (!sb) {
-    await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js");
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "pkce" } });
-  }
+  // One shared promise: calls made at the same moment on page load get the same client (never two clients and two sets of auth listeners)
+  sb ??= loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.min.js").then(() =>
+    window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "pkce" } }))
+    .catch(e => { sb = null; throw e; });
   return sb;
 }
 
@@ -80,7 +80,7 @@ export async function workspaces() {
   if (!LIVE) return [{ id: "sample", name: "Acme Fintech", is_sample: true }];
   const c = await client();
   const { data, error } = await c.rpc("my_workspaces");
-  if (error) throw new Error(friendly(error));
+  if (error) throw orExpired(error);
   return Array.isArray(data) ? data : [];
 }
 async function rpc(name, args) {
@@ -102,7 +102,7 @@ export async function callDesk(body) {
   const r = await fetch(`${SUPABASE_URL}/functions/v1/desk`, { method: "POST",
     headers: { Authorization: `Bearer ${data.session.access_token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({ error: "Desk sent an unreadable reply" }));
-  if (!r.ok || j.error) throw new Error(j.error || `Desk error ${r.status}`);
+  if (!r.ok || j.error) { if (isSessionExpired(j.error)) throw new SessionExpiredError(); throw new Error(j.error || `Desk error ${r.status}`); }
   return j;
 }
 
@@ -115,15 +115,31 @@ export async function currentUser() {
   return store.get("session") || memSession;
 }
 
+/** The signed-in user's own company (never the sample one), or null when they have none yet (setup).
+ *  An expired session throws SessionExpiredError: row-level security hides every row then, and that must never
+ *  read as "no company" (bug 25 Nov). A user with their own company plus sample access has two member rows,
+ *  so the own company is picked through my_workspaces(), not .maybeSingle() over all memberships. */
 export async function getProfile(user) {
-  if (LIVE) {
-    const c = await client();
-    const { data, error } = await c.from("member").select("full_name, phone, app_role, company:company_id(name, city, team_setup, desk_enabled)").eq("user_id", user.id).maybeSingle();
-    if (error) throw new Error(friendly(error));
-    if (!data) return null;
-    return { name: data.full_name, phone: data.phone, company: data.company.name, city: data.company.city, setup: data.company.team_setup, deskEnabled: data.company.desk_enabled === true };
-  }
+  if (LIVE) return profileFromClient(await client(), user);
   return store.get("profile:" + user.email) || (memProfile && memProfile.email === user.email ? memProfile : null);
+}
+/** getProfile's live half, with the Supabase client passed in (unit-tested with a fake client). */
+export async function profileFromClient(c, user) {
+  {
+    const fresh = await c.rpc("session_fresh");
+    if (fresh.error) throw orExpired(fresh.error);
+    if (fresh.data !== true) throw new SessionExpiredError();
+    const ws = await c.rpc("my_workspaces");
+    if (ws.error) throw orExpired(ws.error);
+    const own = (Array.isArray(ws.data) ? ws.data : []).find(w => !w.is_sample);
+    if (!own) return null;
+    const { data, error } = await c.from("member").select("full_name, phone, app_role, company:company_id(id, name, city, team_setup, desk_enabled)")
+      .eq("user_id", user.id).eq("company_id", own.id).maybeSingle();
+    if (error) throw orExpired(error);
+    if (!data) throw new SessionExpiredError();             // listed a moment ago, hidden now: the session just went stale
+    return { name: data.full_name, phone: data.phone, company: data.company.name, companyId: data.company.id, city: data.company.city,
+      setup: data.company.team_setup, deskEnabled: data.company.desk_enabled === true };
+  }
 }
 
 export async function saveProfile(user, p) {
@@ -131,7 +147,7 @@ export async function saveProfile(user, p) {
     const c = await client();
     const { error } = await c.rpc("create_company_for_me", { p_company: p.company, p_city: p.city, p_full_name: p.name, p_phone: p.phone || null, p_setup: p.setup,
       p_country: p.country, p_region: p.region || null, p_timezone: p.timezone });
-    if (error) throw new Error(friendly(error));
+    if (error) throw orExpired(error);
     return p;
   }
   memProfile = { ...p, email: user.email };
@@ -163,6 +179,11 @@ export async function onSignedOut(fn) {
   c.auth.onAuthStateChange(event => { if (event === "SIGNED_OUT") fn(); });
 }
 
+/** The database refuses sessions over 12 hours (009/010): "Your session has expired. Sign in again." (SQLSTATE 28000). */
+export const SESSION_EXPIRED = "Your session has expired. Sign in again.";
+export class SessionExpiredError extends Error { constructor() { super(SESSION_EXPIRED); this.name = "SessionExpiredError"; } }
+export const isSessionExpired = e => e instanceof SessionExpiredError || e?.code === "28000" || /session has expired/i.test(String(e?.message ?? e ?? ""));
+const orExpired = e => (isSessionExpired(e) ? new SessionExpiredError() : new Error(friendly(e)));
 export const CODE_WRONG = "That code is wrong. Check the newest email from Clearstage and try again.";
 export const CODE_EXPIRED = "That code has expired. Send a new one.";
 export const CODE_UNKNOWN = "That code is wrong or has expired. Send a new one.";
@@ -177,6 +198,7 @@ export function codeError(err, sentAt, now = Date.now()) {
 
 function friendly(err) {
   const m = (err && err.message) || "";
+  if (isSessionExpired(err)) return SESSION_EXPIRED;          // before the code-expired wording below
   if (/rate limit|too many/i.test(m)) return "Too many codes requested. Wait a minute, then try again.";
   if (/expired|invalid/i.test(m)) return CODE_EXPIRED;
   if (/signups? not allowed|disabled/i.test(m)) return "New sign-ups are switched off for this workspace. Ask the admin to invite you.";

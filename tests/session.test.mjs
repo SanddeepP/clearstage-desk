@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sessionState, createSessionGuard, signedInAtFromToken, IDLE_MS, WARN_MS, MAX_MS, SESSION_KEYS } from "../lib/session.js";
+import { restoredState } from "../lib/session.js";
 
 const MIN = 60e3;
 // A fake "browser": shared localStorage across tabs, a clock, timers and event targets that deliver storage events to other tabs.
@@ -95,4 +96,14 @@ test("sign-in time comes from the token's amr timestamp", () => {
   assert.equal(signedInAtFromToken(tok), 1795000000 * 1000);
   assert.equal(signedInAtFromToken("garbage"), null);
   assert.ok(SESSION_KEYS.out);
+});
+
+test("restoredState: a restored session is judged before anything loads (bug 25 Nov)", () => {
+  const H = 3600e3, now = Date.UTC(2026, 10, 25, 4, 0);
+  const st = v => ({ getItem: k => (k === "cs:act" ? v : null) });
+  assert.equal(restoredState(now - 13 * H, { storage: st(String(now - 60e3)), now }), "max");
+  assert.equal(restoredState(now - 2 * H, { storage: st(String(now - 40 * 60e3)), now }), "idle");
+  assert.equal(restoredState(now - 2 * H, { storage: st(String(now - 27 * 60e3)), now }), "ok");     // warn is for the running guard
+  assert.equal(restoredState(now - 2 * H, { storage: st(null), now }), "ok");
+  assert.equal(restoredState(null, { storage: { getItem() { throw new Error("blocked"); } }, now }), "ok");
 });

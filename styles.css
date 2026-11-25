@@ -354,3 +354,4 @@ td:last-child{font-family:var(--mono);font-size:13px}
 .emptyws h3{margin:0;font-size:17px}
 .emptyws p{margin:0;color:var(--ink-2)}
 .saform{flex-wrap:nowrap}.saform input{flex:1;min-width:0;min-height:44px;border:1px solid var(--field);border-radius:8px;padding:0 12px;background:var(--surface)}
+.setupwho{text-align:center;margin:0}.linkbtn{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit;min-height:24px}
