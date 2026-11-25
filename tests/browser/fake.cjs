@@ -52,6 +52,20 @@ module.exports.FAKE = `(() => {
         return res({ module: args.p_module, state: args.p_state });
       }
       if (name === 'update_my_name') { (F.members || []).forEach(m => { m.full_name = args.p_name; }); return res({ full_name: args.p_name }); }
+      // G2 roles (017)
+      if (name === 'claim_my_invite') return res(F.claimCompany || null);
+      if (name === 'my_roles') return res(F.myRoles || null);
+      if (name === 'company_people') return res(F.people || []);
+      if (name === 'set_member_roles') {
+        if (F.rolesError) return res(null, { message: F.rolesError });
+        const m = (F.people || []).find(x => x.id === args.p_member); if (m) Object.assign(m, { roles: args.p_roles, see_pay: args.p_see_pay, offer_approver: args.p_offer_approver });
+        return res({ member_id: args.p_member, roles: args.p_roles });
+      }
+      if (name === 'invite_member') {
+        if (F.rolesError) return res(null, { message: F.rolesError });
+        (F.people ||= []).push({ id: 'm-new-' + F.people.length, name: args.p_name, email: args.p_email, roles: args.p_roles, see_pay: args.p_see_pay, offer_approver: args.p_offer_approver, is_me: false, login: 'invited' });
+        return res({ email: args.p_email, pending: true, roles: args.p_roles });
+      }
       if (F.rpcData && name in F.rpcData) return res(F.rpcData[name]);
       return res(null);
     },

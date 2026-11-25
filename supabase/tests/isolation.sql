@@ -61,7 +61,8 @@ select 'offer', (select id::text from offer where company_id = a.v::uuid limit 1
 select 'doc', (select id::text from document where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
 select 'req', (select id::text from requirement where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
 select 'job', (select id::text from cv_job where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
-select 'event', (select id::text from audit_event where company_id = a.v::uuid order by id limit 1) from iso a where a.k = 'A';
+select 'event', (select id::text from audit_event where company_id = a.v::uuid order by id limit 1) from iso a where a.k = 'A' union all
+select 'member', (select id::text from member where company_id = a.v::uuid order by created_at desc limit 1) from iso a where a.k = 'A';
 do $$ begin if exists (select 1 from iso where v is null) then raise exception 'FAILED: missing A id: %', (select string_agg(k, ',') from iso where v is null); end if; end $$;
 
 -- Fingerprint of all of A's data
@@ -241,7 +242,13 @@ insert into calls values
   ('register_module_interest',      $c$register_module_interest('payroll', 'probe', 'page')$c$),
   ('my_module_interest',            $c$my_module_interest()$c$),
   ('module_interest_counts',        $c$module_interest_counts()$c$),
-  ('update_my_name',                $c$update_my_name('Iso Probe')$c$);
+  ('update_my_name',                $c$update_my_name('Iso Probe')$c$),
+  ('has_role',                      $c$has_role('{A}', 'super_admin')$c$),
+  ('my_roles',                      $c$my_roles()$c$),
+  ('company_people',                $c$company_people()$c$),
+  ('set_member_roles',              $c$set_member_roles('{member}', array['super_admin'], true, true)$c$),
+  ('invite_member',                 $c$invite_member('Iso Probe', 'iso-probe@test.in', array['recruiter'], false, false)$c$),
+  ('claim_my_invite',               $c$claim_my_invite()$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);
@@ -270,6 +277,7 @@ end $$;
 do $$ begin
   if (select r.detail from iso_result r where r.name = 'can_approve') not in ('false', 'null') then raise exception 'FAILED: can_approve(A) is true for B'; end if;
   if (select r.detail from iso_result r where r.name = 'is_admin') not in ('false', 'null') then raise exception 'FAILED: is_admin(A) is true for B'; end if;
+  if (select r.detail from iso_result r where r.name = 'has_role') not in ('false', 'null') then raise exception 'FAILED: has_role(A, super_admin) is true for B'; end if;
 end $$;
 reset role;
 

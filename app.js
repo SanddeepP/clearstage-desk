@@ -553,6 +553,7 @@ async function loadWorkspaces() {
   try { MODS_OWN = mods.states(await auth.myModules()); } catch { MODS_OWN = mods.states(null); }
   COMPANIES = null; MI_COUNTS = null; modNote = "";
   ACCESS = null; accessNote = "";
+  PEOPLE = null; MYROLES = null; peopleNote = ""; peopleEdit = null; peopleDraft = null;
   try { ADMIN = await auth.isPlatformAdmin(); } catch { ADMIN = false; }
   try { WS_LIST = await auth.workspaces(); } catch { WS_LIST = []; }
   const own = WS_LIST.find(w => !w.is_sample), sample = WS_LIST.find(w => w.is_sample);
@@ -1096,6 +1097,71 @@ function moduleInterestCard() {
     <p class="note" style="padding:0 16px 12px">Real companies only. Used for the end-of-February and end-of-March reviews: build what clients ask for most.</p></div>`;
 }
 
+// G2 roles (017, CTO ruling 25 Nov §2–3): Settings → People. Everyone sees who holds which role; only a Super admin
+// changes roles or invites, never their own (the database enforces both and logs every change).
+let PEOPLE = null, MYROLES = null, peopleNote = "", peopleEdit = null, peopleBusy = false, peopleDraft = null;   // draft: what was picked when a save was refused
+const ROLE_KEYS = ["super_admin", "hr", "recruiter", "manager"];
+const isSuperAdmin = () => !!MYROLES?.roles?.includes("super_admin");
+async function refreshPeople() {
+  try { [PEOPLE, MYROLES] = await Promise.all([auth.companyPeople(), auth.myRoles()]); }
+  catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); PEOPLE = []; peopleNote = e.message; }
+  if (currentTab === "settings") renderTab();
+}
+const roleBoxes = (pre, sel = [], pay = false, appr = false) => `<fieldset class="rolepick"><legend>Roles</legend>
+  ${ROLE_KEYS.map(k => `<label><input type="checkbox" name="${pre}role" value="${k}" ${sel.includes(k) ? "checked" : ""}> ${esc(auth.ROLE_LABELS[k])}</label>`).join("")}</fieldset>
+  <fieldset class="rolepick"><legend>Access</legend>
+  <label><input type="checkbox" name="${pre}pay" ${pay ? "checked" : ""}> See pay <small>offer amounts and salaries</small></label>
+  <label><input type="checkbox" name="${pre}appr" ${appr ? "checked" : ""}> Offer approver <small>all roles for now</small></label></fieldset>`;
+const loginText = p => p.login === "yes" ? "Signed in" : p.login === "invited" ? "Invited · joins when they first sign in with this email" : "No login · WhatsApp nudges only";
+function peopleCard() {
+  if (!auth.LIVE || isSample()) return "";
+  if (PEOPLE === null) { refreshPeople(); return `<div class="card" id="peopleRoles"><h4><span class="kind">People and roles</span></h4><div class="c"><p class="note">Loading people…</p></div></div>`; }
+  const sa = isSuperAdmin();
+  const row = p => {
+    const tags = [...(p.roles || []).map(r => `<span class="pill p-mut">${esc(auth.ROLE_LABELS[r] || r)}</span>`),
+      p.see_pay ? '<span class="pill p-mut">See pay</span>' : "", p.offer_approver ? '<span class="pill p-mut">Offer approver · all roles</span>' : ""].join(" ");
+    if (peopleEdit === p.id) return `<div class="setting" data-person="${p.id}"><form class="roleform" id="roleForm" data-mid="${p.id}" novalidate>
+      <b style="font-weight:500">${esc(p.name)}</b>${peopleDraft?.key === p.id ? roleBoxes("e", peopleDraft.roles, peopleDraft.pay, peopleDraft.appr) : roleBoxes("e", p.roles, p.see_pay, p.offer_approver)}
+      <div class="row"><button class="btn primary" type="submit">Save roles</button><button class="btn" type="button" data-v="roleCancel">Cancel</button></div></form></div>`;
+    return `<div class="setting" data-person="${p.id}"><div><b style="font-weight:500">${esc(p.name)}${p.is_me ? " (you)" : ""}</b><small>${esc([p.email, loginText(p)].filter(Boolean).join(" · "))}</small><div class="roletags">${tags}</div></div>
+      ${p.is_me ? '<small class="note">You can\'t change your own role</small>' : sa ? `<button class="btn" type="button" data-v="roleEdit" data-mid="${p.id}">Change roles</button>` : ""}</div>`;
+  };
+  return `<div class="card" id="peopleRoles"><h4><span class="kind">People and roles</span>${sa ? "" : '<span class="pill p-mut">View only</span>'}</h4>
+    ${PEOPLE.map(row).join("") || '<div class="c"><p class="note">Nobody here yet.</p></div>'}
+    ${sa ? `<div class="c"><form class="roleform" id="inviteForm" autocomplete="off" novalidate><b style="font-weight:500">Invite someone</b>
+      <div class="row"><input id="invName" maxlength="80" placeholder="Their name, like Ritu Sharma" aria-label="Name" value="${esc(peopleDraft?.key === "invite" ? peopleDraft.name : "")}"><input id="invEmail" type="email" placeholder="name@company.com" aria-label="Email" value="${esc(peopleDraft?.key === "invite" ? peopleDraft.email : "")}"></div>
+      ${peopleDraft?.key === "invite" ? roleBoxes("i", peopleDraft.roles, peopleDraft.pay, peopleDraft.appr) : roleBoxes("i", ["recruiter"])}
+      <div class="row"><button class="btn primary" type="submit">Invite</button></div>
+      <p class="note">No email is sent. Ask them to sign in at desk.crovantapartner.com with this email: they join your workspace straight away.</p></form>
+      <p class="note">Pilot limitation: until role permissions ship after go-live, a Manager can approve offers for all roles and sees offer salaries, and HR sees pay. Invite managers only if that's acceptable.</p></div>`
+      : '<div class="c"><p class="note">Only a Super admin can change roles or invite people.</p></div>'}
+    ${peopleNote ? `<p class="note" role="status" style="padding:0 16px 12px">${esc(peopleNote)}</p>` : ""}</div>`;
+}
+const picked = (form, pre) => ({ roles: [...form.querySelectorAll(`input[name="${pre}role"]:checked`)].map(i => i.value),
+  pay: !!form.querySelector(`input[name="${pre}pay"]`)?.checked, appr: !!form.querySelector(`input[name="${pre}appr"]`)?.checked });
+async function savePeople(kind, form) {
+  if (peopleBusy) return; peopleNote = "";
+  const pre = kind === "invite" ? "i" : "e", x = picked(form, pre);
+  peopleDraft = { key: kind === "invite" ? "invite" : form.dataset.mid, ...x, name: $("#invName")?.value || "", email: $("#invEmail")?.value || "" };
+  if (!x.roles.length) { peopleNote = "Pick at least one role."; return renderTab(); }
+  peopleBusy = true;
+  try {
+    if (kind === "invite") {
+      const name = $("#invName")?.value.trim().replace(/\s+/g, " "), email = $("#invEmail")?.value.trim().toLowerCase();
+      if (!looksLikeName(name)) { peopleNote = "Enter their name as people know them, like “Ritu Sharma”."; peopleBusy = false; return renderTab(); }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "")) { peopleNote = "Enter a valid email address."; peopleBusy = false; return renderTab(); }
+      const r = await auth.inviteMember(name, email, x.roles, x.pay, x.appr);
+      peopleNote = r?.pending ? `${name} is invited. They join when they first sign in with ${email}.` : `${name} has joined your workspace.`;
+    } else {
+      const p = PEOPLE.find(q => q.id === form.dataset.mid);
+      await auth.setMemberRoles(form.dataset.mid, x.roles, x.pay, x.appr);
+      peopleNote = `Roles saved for ${p?.name || "them"}. The change is in your audit log.`; peopleEdit = null;
+    }
+    peopleDraft = null;
+  } catch (e) { if (auth.isSessionExpired(e)) { peopleBusy = false; return endSession("expired"); } peopleNote = e.message; }
+  peopleBusy = false; PEOPLE = null; refreshPeople();
+}
+
 function renderTab() {
   const v = $("#view");
   const head = (h, p, act) => `<div class="vhead"><div><h2>${h}</h2><p>${p}</p></div>${act || ""}</div>`;
@@ -1163,6 +1229,7 @@ $("#view").addEventListener("submit", e => {
     const k = e.target.dataset.need, btn = e.target.querySelector("button"); btn.disabled = true;
     return noteInterest(k, $("#needNote")?.value || null, "page").catch(x => { modNote = x.message; btn.disabled = false; renderTab(); });
   }
+  if (e.target.id === "inviteForm" || e.target.id === "roleForm") { e.preventDefault(); return savePeople(e.target.id === "inviteForm" ? "invite" : "roles", e.target); }
   if (e.target.id !== "sampleGrantForm") return;
   e.preventDefault(); changeAccess("grant", $("#saEmail")?.value);
 });
@@ -1183,6 +1250,8 @@ $("#view").addEventListener("click", e => {
   if (b.dataset.v === "liveToggle") { if (b.getAttribute("aria-pressed") === "true") return; liveDesk = !liveDesk; LS.set("liveDesk", liveDesk ? "1" : "0"); liveConv = null; renderTab(); return; }
   if (b.dataset.v === "uploadCvs") { $("#file").click(); return; }
   if (b.dataset.v === "revokeSample") return changeAccess("revoke", b.dataset.email);
+  if (b.dataset.v === "roleEdit") { peopleEdit = b.dataset.mid; peopleNote = ""; peopleDraft = null; return renderTab(); }
+  if (b.dataset.v === "roleCancel") { peopleEdit = null; peopleDraft = null; peopleNote = ""; return renderTab(); }
   if (b.dataset.v === "signOutAll") { signOutScope = "global"; guard.active ? guard.signedOut() : endSession("manual"); return; }
   if (b.dataset.v === "loadSample") { b.disabled = true; b.textContent = "Loading…"; auth.callDesk({ action: "load_sample_data" }).then(r => { b.textContent = "Loaded"; withDesk(() => say(esc(r.reply))); }).catch(e => { b.disabled = false; b.textContent = "Load sample data"; withDesk(() => say(esc(e.message))); }); return; }
   if (b.dataset.v === "mode") return setMode(b.dataset.mode === "lead" ? "lead" : "solo");
@@ -1307,6 +1376,7 @@ function extraView(head) {
       <div class="card"><h4><span class="kind">Team</span></h4>
         <div class="setting"><div><b style="font-weight:500">Who handles HR and hiring</b><small>${mode === "solo" ? "Just me: what I approve goes out straight away" : "Me and juniors: anything reaching a candidate or employee needs my approval"}</small></div><span class="pill p-mut">${mode === "solo" ? "Solo" : "Lead + juniors"}</span></div>
         <div class="setting"><div><b style="font-weight:500">Separate recruiting and HR teams</b><small>Handoff at offer accepted</small></div><span class="pill p-mut">Coming later</span></div></div>
+      ${peopleCard()}
       <div class="card"><h4><span class="kind">Response targets</span><span class="pill p-mut">Automatic reminders: planned</span></h4>
         <div class="setting"><div><b style="font-weight:500">First reply to applicants</b><small>Escalates to the hiring lead when missed</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Interview feedback</b><small>Reminder at 4 hours, escalation at 24 hours</small></div><span class="pill p-mut">24 hours</span></div>

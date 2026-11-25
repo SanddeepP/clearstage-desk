@@ -108,6 +108,16 @@ export async function registerModuleInterest(module, note, source = "page") {
 export async function setModuleState(company, module, state) { return rpc("set_module_state", { p_company: company, p_module: module, p_state: state }); }
 export async function platformCompanies() { return LIVE ? (await rpc("platform_companies")) ?? [] : []; }
 export async function moduleInterestCounts() { return LIVE ? (await rpc("module_interest_counts")) ?? [] : []; }
+/** G2 roles (017): the signed-in user's roles and flags, and Settings → People. Live workspaces only. */
+export const ROLE_LABELS = { super_admin: "Super admin", hr: "HR", recruiter: "Recruiter", manager: "Manager" };
+export async function myRoles() { return LIVE ? rpc("my_roles") : null; }
+export async function companyPeople() { return LIVE ? (await rpc("company_people")) ?? [] : []; }
+export async function setMemberRoles(memberId, roles, seePay, offerApprover) {
+  return rpc("set_member_roles", { p_member: memberId, p_roles: roles, p_see_pay: !!seePay, p_offer_approver: !!offerApprover });
+}
+export async function inviteMember(name, email, roles, seePay, offerApprover) {
+  return rpc("invite_member", { p_name: name, p_email: email, p_roles: roles, p_see_pay: !!seePay, p_offer_approver: !!offerApprover });
+}
 /** QA-011: people can correct their own name. */
 export async function updateMyName(user, name) {
   if (LIVE) return rpc("update_my_name", { p_name: name });
@@ -149,6 +159,9 @@ export async function profileFromClient(c, user) {
     const fresh = await c.rpc("session_fresh");
     if (fresh.error) throw orExpired(fresh.error);
     if (fresh.data !== true) throw new SessionExpiredError();
+    // G2 roles: someone invited by a Super admin joins that company the first time they sign in (no-op otherwise)
+    const claim = await c.rpc("claim_my_invite");
+    if (claim.error) throw orExpired(claim.error);
     const ws = await c.rpc("my_workspaces");
     if (ws.error) throw orExpired(ws.error);
     const own = (Array.isArray(ws.data) ? ws.data : []).find(w => !w.is_sample);
