@@ -35,3 +35,10 @@ Operational notes for the founder. The full on-call runbook (CTO deliverable E3,
 - Paused Desk: Desk and CV screening stop answering; approvals, screens and email still work. Paused sending: nothing goes out; emails stay queued.
 - Pilot cap: how many real companies may have live CV screening. It's 1; raise it to 3 only once the founder's register says FA-015 is Approved.
 - Every change is in `platform_audit` (read in the SQL editor).
+
+## Offer letter, versions and the approval packet (item 4, 26 Nov)
+- The letter comes from `letter_template` (one Clearstage sample, India, status "rules review pending" until FA-005) plus the offer's calculator lines (Annexure A). Desk may write only the role summary and welcome line (`set_offer_letter_text`, Desk tool `offer_letter_lines`).
+- Every change to the letter's content writes a new `offer_version` (append-only) with `content_hash` = SHA-256 of the canonical JSON. Same content → no new version.
+- Approving an offer: open the packet from the Desk card ("Open the letter to approve"), read to the end of Annexure A (that records `offer_review` for that version), then Approve. The database refuses an approval without a review of the latest version by the same person, and records `approved_version_id`; the audit's `offer_approved` carries the version and hash.
+- The CV in the packet opens only for people who can approve (a 5-minute signed link).
+- Client DOCX templates come next (FA-005 for the wording).

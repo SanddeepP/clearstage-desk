@@ -38,9 +38,11 @@ export const TOOL_DEFS = [
       variable: { type: "integer", minimum: 0, description: "Variable pay at target, rupees per year. Default 0." },
       joining_on: str("YYYY-MM-DD if known (the rules in force on that date apply)"),
       fix: { type: "boolean", description: "true to fix a failing structure" } }, required: ["application_id", "ctc"] } },
+  { name: "offer_letter_lines", description: "Write the only two lines of an offer letter that Desk may write: a one-or-two sentence role summary and a short welcome line. Everything else in the letter (and Annexure A) comes from the company's template and the salary calculator. Use after calculate_ctc, then send_offer.", input_schema: { type: "object", additionalProperties: false, properties: {
+      offer_id: uuid("Offer id from calculate_ctc"), role_summary: str("What the role is about, at most 400 characters"), welcome_line: str("A short welcome, at most 200 characters") }, required: ["offer_id"] } },
   { name: "send_offer", description: "Ask for approval to send a saved offer. It goes out only when a person approves. Refused if the wages check fails.", input_schema: { type: "object", properties: { offer_id: uuid("Offer id from calculate_ctc"), summary: str("e.g. \"Kiran's offer, ₹12 L\"") }, required: ["offer_id", "summary"] } },
   { name: "draft_document", description: "Draft a letter (appointment, confirmation, extension, offer letter) for a person. Creates a draft and asks for approval; nothing is sent.", input_schema: { type: "object", properties: {
-      person_id: uuid("Person id"), kind: { type: "string", enum: ["appointment_letter", "confirmation_letter", "probation_extension", "offer_letter"] }, details: str("Facts to include: role, dates, CTC, notice period") }, required: ["person_id", "kind", "details"] } },
+      person_id: uuid("Person id"), kind: { type: "string", enum: ["appointment_letter", "confirmation_letter", "probation_extension"] }, details: str("Facts to include: role, dates, CTC, notice period") }, required: ["person_id", "kind", "details"] } },
   { name: "mark_offer_accepted", description: "When a candidate accepts a sent offer: proposes creating the employee record, the joiner checklist and the probation review. The user taps Approve first.", input_schema: { type: "object", properties: { offer_id: uuid("Offer id") }, required: ["offer_id"] } },
   { name: "start_probation_review", description: "Propose asking an employee's manager for their probation review on WhatsApp. The user taps Approve first.", input_schema: { type: "object", properties: { person_id: uuid("Employee's person id") }, required: ["person_id"] } },
   { name: "bulk_reject", description: "Draft rejection notes for several candidates of one role with ONE job-relevant reason; they go out only after approval. Never use age, gender, marital status, religion, caste or pregnancy.", input_schema: { type: "object", properties: {
@@ -64,7 +66,7 @@ export const TOOL_DEFS = [
    access (my_access_modules). "today" is everyone's. A letter's module follows its kind. ---- */
 export const TOOL_MODULE = {
   get_brief: "today", chase_owner: "today", find_people: "hire", show_pipeline: "hire", create_role: "hire", add_candidate: "hire",
-  move_candidate: "hire", record_feedback: "hire", calculate_ctc: "hire", send_offer: "hire", bulk_reject: "hire", set_requirements: "hire",
+  move_candidate: "hire", record_feedback: "hire", calculate_ctc: "hire", offer_letter_lines: "hire", send_offer: "hire", bulk_reject: "hire", set_requirements: "hire",
   get_shortlist: "hire", explain_fit: "hire", prepare_reject_batch: "hire", draft_document: "hire",
   show_joiners: "onboard", mark_offer_accepted: "onboard", start_probation_review: "probation",
 };
@@ -188,6 +190,11 @@ export function makeExecutors({ rpc, draft }) {
           note: check.passes ? "Meets the 50% wages rule." : `${formatINR(check.deemedExtraWages)} would count as wages for PF and gratuity.`,
           citation: WAGES_RULE.citation, pf_citation: saved.pf_citation ?? PF_CITATION, status: WAGES_RULE.status,
           legal: "Calculated by the database's fixed rules, not AI. Not legal advice." }] };
+    },
+    async offer_letter_lines({ offer_id, role_summary = null, welcome_line = null }) {
+      const r = await rpc("set_offer_letter_text", { p_offer: offer_id, p_role_summary: role_summary ? String(role_summary).slice(0, 400) : null, p_welcome_line: welcome_line ? String(welcome_line).slice(0, 200) : null });
+      return { result: { ...r, instruction: "Letter updated. Use send_offer to ask for approval; the approver reads the letter before approving." },
+        cards: [{ type: "info", text: `Offer letter updated: version ${r.version}. The rest of the letter and Annexure A come from the template and the calculator.` }] };
     },
     async send_offer({ offer_id, summary }) {
       const ap = await rpc("desk_request_approval", { p_subject_type: "offer", p_subject_id: offer_id, p_summary: summary });

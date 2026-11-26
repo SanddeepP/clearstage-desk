@@ -52,6 +52,7 @@ select 'junior bulk reject draft', (desk_bulk_reject((select id from role where 
 select 'approval goes to lead', (select full_name from member where id = (select owner_id from task where kind = 'approval' and title like '%rejection%')) as approver;
 -- back to the founder (lead): approves offer and the batch
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000001';
+select 'lead reads the letter to Annexure A', mark_offer_reviewed((select id from offer_version where offer_id = (select id from offer limit 1) order by version_no desc limit 1)) is not null;
 select 'lead approves offer', desk_approve('offer', (select id from offer limit 1))->>'approved';
 select 'lead approves batch', desk_approve('batch', (select batch_id from document where kind = 'rejection_note' limit 1))->>'approved';
 select 'rejected apps', count(*) from application where outcome = 'rejected';

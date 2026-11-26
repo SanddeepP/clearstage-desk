@@ -868,6 +868,11 @@ function renderLiveCard(c) {
   const acts = (c.actions || []).map((a, i) => `<button class="btn${i === 0 ? " primary" : ""}" type="button" data-live='${esc(JSON.stringify({ action: a.action, params: a.params }))}'>${esc(a.label)}</button>`).join("");
   const wait = c.waiting_for_other ? `<span class="pill p-warn">Waiting for ${esc(c.approver || "approval")}</span>` : "";
   if (c.type === "brief") return `<div class="card"><h4><span class="kind">Brief · ${c.open} open</span>${c.late ? `<span class="pill p-late">${c.late} late</span>` : ""}</h4>${c.items.map(i => `<div class="item"><span class="pill ${pillCls[i.pill] || "p-mut"}">${esc(i.bucket)}</span><div class="t">${esc(i.title)}<small>${esc(i.why || "")}${i.owner ? " · Owner: " + esc(i.owner) : ""}</small></div></div>`).join("") || '<div class="item"><div class="t">All clear.</div></div>'}</div>`;
+  if (c.type === "approval" && c.subject_type === "offer" && !c.waiting_for_other) {
+    // Item 4: an offer is approved from its packet, after reading the letter to Annexure A (the database checks it too)
+    const rest = (c.actions || []).filter(a => a.action !== "approve").map(a => `<button class="btn" type="button" data-live='${esc(JSON.stringify({ action: a.action, params: a.params }))}'>${esc(a.label)}</button>`).join("");
+    return `<div class="card draft"><h4><span class="kind">Desk drafted</span>${esc(c.title)}</h4><div class="c"><div class="doc">${esc(c.preview)}</div><div class="row"><button class="btn primary" type="button" data-packet="${esc(c.subject_id)}">Open the letter to approve</button>${rest}</div></div></div>`;
+  }
   if (c.type === "approval") return `<div class="card draft"><h4><span class="kind">Desk drafted</span>${esc(c.title)} ${wait}</h4><div class="c"><div class="doc">${esc(c.preview)}</div>${acts ? `<div class="row">${acts}</div>` : ""}</div></div>`;
   if (c.type === "pipeline") return `<div class="card"><h4><span class="kind">Pipeline</span>${esc(c.role)} · ${c.days_open} days open</h4><div class="c"><div class="board">${c.columns.map(col => `<div class="col"><h5>${esc(col.stage)} · ${col.count}</h5>${col.people.map(n => `<span class="cand">${esc(n)}</span>`).join("")}${col.more ? `<span class="note">+${col.more} more</span>` : ""}</div>`).join("")}</div></div></div>`;
   if (c.type === "offer") return `<div class="card ctc"><h4><span class="kind">Offer · CTC</span>${c.ctc_display} <span class="pill ${c.passes ? "p-ok" : "p-late"}">${c.passes ? "Check passed" : "Check failed"}</span></h4><div class="c"><div class="tablewrap"><table><tr><th>Component</th><th>₹ per year</th></tr>${c.components.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.display.slice(1))}</td></tr>`).join("")}</table></div><div class="row"><span class="pill ${c.passes ? "p-ok" : "p-late"}">Wages ${c.wages_percent}% of pay</span><span class="note">${esc(c.note)}</span></div><div class="why">${esc(c.legal)} Rule: ${esc(c.citation)}. Status: ${esc(c.status)}.</div></div></div>`;
@@ -896,6 +901,61 @@ function showLive(out) {
     run(req, card);
   });
   d.querySelectorAll("[data-say]").forEach(b => b.onclick = () => { me(b.dataset.say); liveTurn(b.dataset.say); });
+  d.querySelectorAll("[data-packet]").forEach(b => b.onclick = () => openOfferPacket(b.dataset.packet));
+}
+/* ----- Item 4: the approval packet. 1 Letter (with Annexure A) · 2 Checks · 4 CV · 6 History. ----- */
+const fmtINR = n => "₹" + Number(n || 0).toLocaleString("en-IN");
+function letterHtml(v) {
+  const c = v.content, a = c.annexure, pending = c.template.status;
+  return `<div class="letter" data-letter>
+    ${pending ? `<p class="pill p-warn" style="display:inline-block">Sample template · ${esc(pending)}</p>` : ""}
+    ${c.clauses.map(x => `<p data-clause="${esc(x.id)}">${esc(x.text)}</p>`).join("")}
+    <h5 style="margin-top:20px">${esc(a.title)}</h5>
+    <div class="tablewrap"><table><thead><tr><th scope="col">Component</th><th scope="col">Per month</th><th scope="col">Per year</th></tr></thead><tbody>
+      ${a.lines.map(l => `<tr><td>${esc(l.name)}</td><td>${esc(fmtINR(l.monthly))}</td><td>${esc(fmtINR(l.annual))}</td></tr>`).join("")}
+      <tr><th scope="row">Total cost to company</th><td></td><th>${esc(fmtINR(a.ctc))}</th></tr></tbody></table></div>
+    <p class="note">${esc(a.note)}${a.wages_percent != null ? ` Wages are ${esc(a.wages_percent)}% of pay.` : ""}</p>
+    <p class="note">Version ${esc(v.no)} · content hash ${esc(v.hash)} · ${esc(c.template.name)} v${esc(c.template.version)}</p><span data-annexure-end aria-hidden="true" style="display:block;height:1px"></span></div>`;
+}
+async function openOfferPacket(offerId) {
+  let p;
+  try { p = await auth.offerPacket(offerId); } catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); return say(esc(e.message)); }
+  if (!p?.version) return say("This offer has no letter yet. Ask Desk to work out the salary first.");
+  const v = p.version, ch = p.checks || {};
+  const checkRow = (ok, t, warn) => `<div class="item"><span class="pill ${ok === true ? "p-ok" : ok === false ? (warn ? "p-warn" : "p-late") : "p-mut"}">${ok === true ? "Pass" : ok === false ? (warn ? "Check" : "Fail") : "—"}</span><div class="t">${t}</div></div>`;
+  const d = desk(`<div class="card" data-offerpacket="${esc(p.offer_id)}"><h4><span class="kind">Approval packet</span>${esc(v.content.fields.candidate_name)} · ${esc(v.content.fields.role_title)} <span class="pill p-mut">v${esc(v.no)}</span></h4>
+    <div class="c"><h5>1. Letter</h5>${letterHtml(v)}
+      <div class="row"><button class="btn" type="button" data-print>Print or save as PDF</button></div></div>
+    <div class="c"><h5>2. Checks</h5>
+      ${checkRow(ch.passes, `Wages ${esc(ch.wages_percent)}% of pay · ${esc(ch.rule)}`)}
+      ${checkRow(ch.in_budget, ch.budget ? `CTC inside the role's approved range (${esc(fmtINR(ch.budget.min))}–${esc(fmtINR(ch.budget.max))})` : "No approved salary range on this role", true)}
+      ${checkRow(null, `Template: ${esc(ch.template_status || "")}. The wording waits for the founder's approval (FA-005).`)}
+      ${ch.manual_label ? checkRow(null, esc(ch.manual_label)) : ""}</div>
+    <div class="c"><h5>4. CV</h5>${p.cv ? `<div class="row"><span>${esc(p.cv.file_name)}</span>${p.cv.storage_path ? `<button class="btn" type="button" data-cvopen="${esc(p.cv.storage_path)}">Open the CV</button>` : `<span class="note">Only approvers can open the CV.</span>`}</div>` : `<p class="note">No CV on file for this candidate.</p>`}</div>
+    <div class="c"><h5>6. History</h5>${(p.versions || []).map(x => `<div class="note">Version ${esc(x.no)} · ${esc(String(x.created_at).slice(0, 16).replace("T", " "))}${x.by ? " · " + esc(x.by) : ""} · ${esc(x.hash.slice(0, 12))}…</div>`).join("")}
+      ${(p.history || []).slice(0, 8).map(h => `<div class="note">${esc(h.action.replace(/_/g, " "))} · ${esc(String(h.at).slice(0, 16).replace("T", " "))}${h.by ? " · " + esc(h.by) : ""}</div>`).join("")}</div>
+    <div class="c"><div class="row" data-approve-row>${p.status === "sent" || p.status === "accepted" ? `<span class="pill p-ok">Approved · v${esc(p.approved_version?.no ?? "")} · ${esc((p.approved_version?.hash || "").slice(0, 12))}…</span>`
+      : !p.can_approve ? `<span class="note">Your drafts go to your lead for approval.</span>`
+      : `<button class="btn primary" type="button" data-offer-approve ${v.reviewed_by_me ? "" : "disabled"}>Approve version ${esc(v.no)}</button><span class="note" data-review-note>${v.reviewed_by_me ? "You've read this version." : "Read the letter to the end of Annexure A to approve."}</span>`}</div></div></div>`);
+  const card = d.querySelector("[data-offerpacket]");
+  card.querySelector("[data-print]").onclick = () => { const w = window.open("", "_blank"); if (!w) return say("Allow pop-ups to print the letter."); w.document.write(`<!doctype html><meta charset="utf-8"><title>Offer letter</title><style>body{font:14px/1.6 Inter,system-ui,sans-serif;max-width:720px;margin:40px auto;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px;text-align:left}.pill{border:1px solid #999;padding:2px 8px;border-radius:12px;font-size:12px}.note{color:#555;font-size:12px}</style>${letterHtml(v)}`); w.document.close(); w.focus(); w.print(); };
+  card.querySelector("[data-cvopen]")?.addEventListener("click", async e => { try { window.open(await auth.cvLink(e.target.dataset.cvopen), "_blank", "noopener"); } catch (x) { say(esc(x.message)); } });
+  const btn = card.querySelector("[data-offer-approve]");
+  if (btn && !v.reviewed_by_me) {
+    const end = card.querySelector("[data-annexure-end]");
+    const reviewed = async () => {
+      try { await auth.markOfferReviewed(v.id); btn.disabled = false; card.querySelector("[data-review-note]").textContent = "You've read this version."; }
+      catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); card.querySelector("[data-review-note]").textContent = e.message; }
+    };
+    if ("IntersectionObserver" in window) { const io = new IntersectionObserver(es => { if (es.some(x => x.isIntersecting)) { io.disconnect(); reviewed(); } }, { threshold: 0 }); io.observe(end); }
+    else reviewed();
+  }
+  btn?.addEventListener("click", async () => {
+    btn.disabled = true;
+    try { const out = await auth.callDesk({ action: "approve", params: { subject_type: "offer", subject_id: p.offer_id } });
+      card.querySelector("[data-approve-row]").innerHTML = `<span class="pill p-ok">Approved · v${esc(v.no)} · ${esc(v.hash.slice(0, 12))}…</span>`; if (out.reply) say(esc(out.reply)); sendAfterApproval(); }
+    catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); say(esc(e.message)); btn.disabled = false; }
+  });
 }
 /* Item 3: approved emails go out straight after the approval, from "<Company> via Clearstage". */
 async function sendAfterApproval() {

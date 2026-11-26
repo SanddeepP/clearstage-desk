@@ -40,4 +40,4 @@ jobs:
         with:
           node-version: 20
       - run: npm install --no-save playwright@1.63.0 && npx playwright install --with-deps chromium
-      - run: (python3 -m http.server 8795 >/dev/null 2>&1 &) && sleep 1 && node tests/browser/live-auth.cjs && node tests/browser/modules.cjs && node tests/browser/roles.cjs && node tests/browser/roles-demo.cjs && node tests/browser/qa-044-045.cjs && node tests/browser/r3-fixes.cjs && node tests/browser/cv-live.cjs && node tests/browser/email-switches.cjs
+      - run: (python3 -m http.server 8795 >/dev/null 2>&1 &) && sleep 1 && node tests/browser/live-auth.cjs && node tests/browser/modules.cjs && node tests/browser/roles.cjs && node tests/browser/roles-demo.cjs && node tests/browser/qa-044-045.cjs && node tests/browser/r3-fixes.cjs && node tests/browser/cv-live.cjs && node tests/browser/email-switches.cjs && node tests/browser/offer-packet.cjs

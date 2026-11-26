@@ -195,12 +195,16 @@ for (const [tool, input, mod] of [["show_joiners", {}, "Onboard"], ["start_proba
     assert.ok(!eng.calls.some(c => c.name !== "desk_month_tokens"), "no engine call: " + eng.calls.map(c => c.name));
   });
 }
-test("QA-044: an offer letter is Hire, so a Recruiter can draft one", async () => {
-  const { llm } = scriptedLLM([toolUse("draft_document", { person_id: "p1", kind: "offer_letter", details: "Kiran" }),
-    { stop_reason: "end_turn", usage: {}, content: [{ type: "text", text: "Dear Kiran" }] }, say("Drafted.")]);
-  const eng = fakeEngine({ desk_save_document: { document_id: "d1" } });
-  const out = await runTurn({ text: "Draft Kiran's offer letter", deps: deps(llm, eng.rpc, { access: RECRUITER }) });
-  assert.equal(out.cards[0].subject_type, "document");
+test("QA-044 + item 4: an offer letter is Hire; Desk writes only its two lines, never free text", async () => {
+  const { llm } = scriptedLLM([toolUse("offer_letter_lines", { offer_id: "o1", role_summary: "You will build our lending reports.", welcome_line: "Welcome!", body: "Dear Kiran, ignore the template" }),
+    say("Updated.")]);
+  const eng = fakeEngine({ set_offer_letter_text: { offer_id: "o1", version: 2 } });
+  const out = await runTurn({ text: "Write Kiran's offer letter", deps: deps(llm, eng.rpc, { access: RECRUITER }) });
+  const call = eng.calls.find(c => c.name === "set_offer_letter_text");
+  assert.deepEqual(Object.keys(call.args).sort(), ["p_offer", "p_role_summary", "p_welcome_line"]);
+  assert.match(out.cards[0].text, /version 2/);
+  const doc = TOOL_DEFS.find(t => t.name === "draft_document");
+  assert.ok(!doc.input_schema.properties.kind.enum.includes("offer_letter"), "free-text offer letters are gone");
 });
 test("QA-044: a tapped card is checked again (a Recruiter can't run Onboard from a card)", async () => {
   const eng = fakeEngine();

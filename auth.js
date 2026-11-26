@@ -251,6 +251,14 @@ export async function retryEmail(id) { return rpc("email_retry", { p_id: id }); 
 export async function platformStatus() { return rpc("platform_status"); }
 export async function setPlatformSwitch(key, on) { return rpc("set_platform_switch", { p_key: key, p_on: on }); }
 export async function setPilotCap(n) { return rpc("set_pilot_cap", { p_n: n }); }
+/* ----- Item 4: the offer approval panel (letter + Annexure A, checks, CV, history), review before approve ----- */
+export async function offerPacket(offerId) { return rpc("offer_packet", { p_offer: offerId }); }
+export async function markOfferReviewed(versionId) { return rpc("mark_offer_reviewed", { p_version: versionId }); }
+/** A short-lived link to the original CV (approvers only: the packet gives the path only to them). */
+export async function cvLink(path) {
+  const c = await client(); const { data, error } = await c.storage.from("cvs").createSignedUrl(path, 300);
+  if (error) throw new Error(plainError(error.message)); return data.signedUrl;
+}
 export async function callDesk(body) {
   if (!LIVE) throw new Error("The live Desk agent needs a signed-in account.");
   const c = await client();
