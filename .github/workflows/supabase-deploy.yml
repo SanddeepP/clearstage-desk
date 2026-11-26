@@ -3,7 +3,7 @@
 # Run by hand only (Actions → "supabase deploy" → Run workflow). Secrets stay in GitHub: SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD.
 #   mode=plan  : changes nothing. Shows the remote migration history, a dry run of `db push`, and the live functions' settings.
 #   mode=apply : optionally marks already-applied migrations as applied (repair), pushes pending migrations, then deploys
-#                screen-cv and desk in the same run, so the database and the functions never disagree.
+#                screen-cv, desk and send-email in the same run, so the database and the functions never disagree.
 # This repo is public, so the run log is too: nothing here prints data or secrets (GitHub masks secrets in logs).
 name: supabase deploy
 on:
@@ -71,11 +71,12 @@ jobs:
           echo "Guard passed: pushing exactly [$got]"
           supabase db push --remote --yes --include-all
           supabase migration list --remote
-      - name: Deploy screen-cv and desk
+      - name: Deploy screen-cv, desk and send-email
         if: inputs.mode == 'apply'
         run: |
           flag=""; [ "${{ inputs.verify_jwt }}" = "false" ] && flag="--no-verify-jwt"
           supabase functions deploy screen-cv --use-api --yes $flag
           supabase functions deploy desk --use-api --yes $flag
+          supabase functions deploy send-email --use-api --yes $flag
           curl -sf -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$PROJECT_REF/functions" \
             | jq -r '.[] | "\(.slug)  version=\(.version)  verify_jwt=\(.verify_jwt)  status=\(.status)  updated=\(.updated_at)"'

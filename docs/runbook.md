@@ -21,3 +21,17 @@ Operational notes for the founder. The full on-call runbook (CTO deliverable E3,
 - Before the AI sees it, the text is masked: name, emails, phones, links, addresses (city kept), dates of birth, protected words, and college names (keyword rule + 3,500 AISHE institution names, `lib/aishe.js`, MIT-licensed source; regenerate with `scripts/aishe-names.py`).
 - **Delete CV** on the result card removes the stored file first, then `desk_delete_cv` removes the file record, screening job, masked text, quotes, score and cached AI answer. The candidate stays on the role (deleting a person is the DPDP delete, item 8). The database refuses to delete the record while the file is still stored.
 - Switching off: same switch → Off. Stored CVs stay until deleted or the retention job removes them.
+
+## Email through Resend (item 3, 26 Nov)
+- Approving an offer, letter or Closure Note (or a chase) queues an email; the app then calls the `send-email` function, which sends the company's queued, approved emails from **"<Company> via Clearstage" <notify@mail.crovantapartner.com>**, replies to the approver. Plain text, exactly as approved; a queued message can't be edited, only cancelled.
+- States (Settings → Email): Queued · Sending · Sent · Not sent (after 3 tries) · No email address. Retry puts a failed one back in the queue. Sent and final failures are audited (`email_sent`, `email_failed`, message id only).
+- **Needs the secret `RESEND_API_KEY`** in Supabase → Edge Functions → Secrets (set by the founder; never in the repo or chat). Until then everything stays queued and the app says "Email isn't connected yet". Optional `EMAIL_FROM` to change the sending address (must be on the verified domain).
+- A 401/403 from Resend raises a platform alert (`email_setup`).
+- WhatsApp stays a preview: an outbound WhatsApp message is sent by email.
+- Messages queued by the scheduler (reminders) go out the next time anyone in that company approves something or taps **Send queued now**. A timed sender comes with the backup workflow.
+
+## Safety switches (item 6, 26 Nov)
+- Settings → **Safety switches** (platform admin only): **Desk AI, every company** (Running / Paused), **Sending, every company** (Sending / Paused), **Pilot cap** (1–5).
+- Paused Desk: Desk and CV screening stop answering; approvals, screens and email still work. Paused sending: nothing goes out; emails stay queued.
+- Pilot cap: how many real companies may have live CV screening. It's 1; raise it to 3 only once the founder's register says FA-015 is Approved.
+- Every change is in `platform_audit` (read in the SQL editor).

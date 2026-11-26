@@ -94,7 +94,9 @@ module.exports.opener = (b, BASE, { width = 1280, height = 900 } = {}) => async 
   await p.route('**/config.js', r => r.fulfill({ contentType: 'text/javascript', body: 'export const SUPABASE_URL="https://fake.supabase.test", SUPABASE_ANON_KEY="sb_publishable_test", EMAIL_HAS_CODE=true;' }));
   const deskCalls = [];
   await p.route('https://fake.supabase.test/**', r => {
-    let req = null; try { req = JSON.parse(r.request().postData() || 'null'); } catch {} deskCalls.push(req);
+    let req = null; try { req = JSON.parse(r.request().postData() || 'null'); } catch {}
+    if (r.request().url().includes('/functions/v1/send-email')) { deskCalls.push({ email: true }); return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fake.emailReply || { status: 'not_connected', message: "Email isn't connected yet, so messages stay queued." }) }); }
+    deskCalls.push(req);
     const reply = (req && fake.deskReplies && fake.deskReplies[req.action]) || fake.deskReply || { error: 'unexpected' };
     return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reply) });
   });

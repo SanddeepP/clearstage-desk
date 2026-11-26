@@ -569,7 +569,7 @@ async function loadWorkspaces() {
   try { INTEREST = (await auth.myModuleInterest()) || {}; } catch { INTEREST = {}; }
   if (!auth.LIVE) { WS_LIST = [{ id: "sample", name: "Acme Fintech", is_sample: true }]; WS = WS_LIST[0]; return; }
   try { MODS_OWN = mods.states(await auth.myModules()); } catch { MODS_OWN = mods.states(null); }
-  COMPANIES = null; MI_COUNTS = null; modNote = "";
+  COMPANIES = null; MI_COUNTS = null; modNote = ""; OUTBOX = null; outboxNote = ""; SAFETY = null; safetyNote = "";
   ACCESS = null; accessNote = "";
   PEOPLE = null; MYROLES = null; peopleNote = ""; peopleEdit = null; peopleDraft = null;
   CREQ = null; EMPS = null; creqNote = ""; creqReject = null;
@@ -882,7 +882,7 @@ function showLive(out) {
   const d = desk(`${out.reply ? `<div class="bubble">${esc(out.reply)}</div>` : ""}${(out.cards || []).map(renderLiveCard).join("")}`);
   const run = async (req, card) => {
     card?.querySelectorAll("button").forEach(x => x.disabled = true);
-    try { const out = await auth.callDesk(req); if (req.action === "approve" && out.approved_by) ink(card, out.approved_by, out.approved_at || Date.now()); showLive(out); } catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
+    try { const out = await auth.callDesk(req); if (req.action === "approve" && out.approved_by) ink(card, out.approved_by, out.approved_at || Date.now()); showLive(out); if (req.action === "approve" || req.action === "run") sendAfterApproval(); } catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
   };
   d.querySelectorAll("[data-live]").forEach(b => b.onclick = () => {
     const card = b.closest(".card"), req = JSON.parse(b.dataset.live);
@@ -896,6 +896,15 @@ function showLive(out) {
     run(req, card);
   });
   d.querySelectorAll("[data-say]").forEach(b => b.onclick = () => { me(b.dataset.say); liveTurn(b.dataset.say); });
+}
+/* Item 3: approved emails go out straight after the approval, from "<Company> via Clearstage". */
+async function sendAfterApproval() {
+  const r = await auth.sendQueuedEmail();
+  if (r.status === "done" && r.sent) say(`Sent ${r.sent === 1 ? "the email" : r.sent + " emails"} from “${esc(profile?.company || "your company")} via Clearstage”. Replies go to the approver.`);
+  if (r.status === "done" && r.failed) say(`${r.failed === 1 ? "One email" : r.failed + " emails"} couldn't be sent yet: ${esc(r.results.find(x => x.error)?.error || "")} See Settings → Email.`);
+  if (r.status === "not_connected" || r.status === "paused") say(esc(r.message));
+  if (r.status === "error") say(`The email didn't go out yet: ${esc(r.message)} It stays queued.`);
+  OUTBOX = null;
 }
 async function liveTurn(t) {
   const wait = desk('<div class="bubble"><span class="note">Desk is working on it…</span></div>');
@@ -1205,6 +1214,39 @@ async function setCvLive(on) {
   try { await auth.setCvLive(ADMIN_CO, on); modNote = `Live CV screening is now ${on ? "on" : "off"} for ${co?.name}.`; }
   catch (e) { if (auth.isSessionExpired(e)) { modBusy = false; return endSession("expired"); } modNote = e.message; }
   modBusy = false; COMPANIES = null; refreshCompanies();
+}
+// Settings → Email: the company's outbox with plain states, and Retry for a failed email (item 3).
+let OUTBOX = null, outboxNote = "";
+const OUT_STATE = { queued: ["Queued", "p-mut"], sending: ["Sending", "p-acc"], sent: ["Sent", "p-ok"], failed: ["Not sent", "p-late"], no_address: ["No email address", "p-late"], cancelled: ["Cancelled", "p-mut"] };
+function outboxCard() {
+  if (!auth.LIVE || isSample() || !profile?.companyId) return "";
+  if (OUTBOX === null) { OUTBOX = []; auth.companyOutbox().then(r => { OUTBOX = r || []; if (currentTab === "settings") renderTab(); }).catch(e => { outboxNote = e.message; }); }
+  return `<div class="card" id="outboxCard"><h4><span class="kind">Email</span><span class="pill p-mut">From “${esc(profile?.company || "")} via Clearstage”</span></h4>
+    <div class="setting"><div><b style="font-weight:500">Approved offers, letters, chases and Closure Notes go by email</b><small>Only after a named approval. Replies go to the person who approved. WhatsApp stays a preview.</small></div>
+      <button class="btn" type="button" data-v="sendNow">Send queued now</button></div>
+    ${OUTBOX.length ? `<div class="tablewrap"><table class="mtable"><thead><tr><th scope="col">To</th><th scope="col">Subject</th><th scope="col">Status</th><th scope="col"></th></tr></thead><tbody>
+      ${OUTBOX.map(m => { const st = OUT_STATE[m.status] || [m.status, "p-mut"]; return `<tr><th scope="row">${esc(m.to || "—")}</th><td>${esc(m.subject || "—")}</td><td><span class="pill ${st[1]}">${esc(st[0])}</span>${m.error ? `<small style="display:block">${esc(m.error)}</small>` : ""}</td>
+        <td>${m.status === "failed" || m.status === "no_address" ? `<button class="btn" type="button" data-retry="${esc(m.id)}">Retry</button>` : m.sent_at ? `<small>${esc(String(m.sent_at).slice(0, 16).replace("T", " "))}</small>` : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<p class="note" style="padding:0 16px">Nothing sent yet.</p>`}
+    ${outboxNote ? `<p class="note" role="status" style="padding:0 16px">${esc(outboxNote)}</p>` : ""}</div>`;
+}
+// Settings → Safety switches (platform admin only, item 6)
+let SAFETY = null, safetyNote = "", safetyBusy = false;
+function safetyCard() {
+  if (!ADMIN) return "";
+  if (SAFETY === null) { SAFETY = {}; auth.platformStatus().then(r => { SAFETY = r || {}; if (currentTab === "settings") renderTab(); }).catch(e => { safetyNote = e.message; }); }
+  const seg = (key, on, offLabel, onLabel) => `<div class="seg" role="group" aria-label="${esc(key)}"><button type="button" data-switch="${key}" data-on="0" aria-pressed="${!on}">${offLabel}</button><button type="button" data-switch="${key}" data-on="1" aria-pressed="${!!on}">${onLabel}</button></div>`;
+  return `<div class="card" id="safetyCard"><h4><span class="kind">Safety switches</span><span class="pill p-mut">Clearstage only</span></h4>
+    <div class="setting"><div><b style="font-weight:500">Desk AI, every company</b><small>Paused: Desk and CV screening stop answering. Approvals, screens and email still work.</small></div>${seg("desk_off", SAFETY.desk_off, "Running", "Paused")}</div>
+    <div class="setting"><div><b style="font-weight:500">Sending, every company</b><small>Paused: nothing is sent; approved emails stay queued until you switch back.${SAFETY.emails_queued != null ? ` Queued now: ${SAFETY.emails_queued}. Not sent: ${SAFETY.emails_failed}.` : ""}</small></div>${seg("sending_paused", SAFETY.sending_paused, "Sending", "Paused")}</div>
+    <div class="setting"><div><b style="font-weight:500">Pilot cap</b><small>Real companies with live CV screening at once. Live now: ${SAFETY.cv_live_companies ?? "—"}. Raise it only once the register says FA-015 is Approved.</small></div>
+      <select data-pilotcap aria-label="Pilot cap">${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${SAFETY.pilot_cap === n ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+    ${safetyNote ? `<p class="note" role="status" style="padding:0 16px">${esc(safetyNote)}</p>` : ""}</div>`;
+}
+async function safetyDo(fn, done) {
+  if (safetyBusy) return; safetyBusy = true;
+  try { await fn(); safetyNote = done; } catch (e) { if (auth.isSessionExpired(e)) { safetyBusy = false; return endSession("expired"); } safetyNote = e.message; }
+  safetyBusy = false; SAFETY = null; renderTab();
 }
 function moduleInterestCard() {
   if (!ADMIN) return "";
@@ -1537,6 +1579,18 @@ $("#view").addEventListener("change", e => {
   if (e.target.id === "modCompany") { ADMIN_CO = e.target.value; modNote = ""; return renderTab(); }
   if (e.target.dataset?.modstate) return setModule(e.target.dataset.modstate, e.target.value);
   if (e.target.dataset && "cvlive" in e.target.dataset) return setCvLive(e.target.value === "on");
+  if (e.target.dataset && "pilotcap" in e.target.dataset) { const n = Number(e.target.value); return safetyDo(() => auth.setPilotCap(n), `Pilot cap is now ${n}.`); }
+});
+// Email outbox and safety switches (items 3 and 6)
+$("#view").addEventListener("click", async e => {
+  const sw = e.target.closest("[data-switch]");
+  if (sw) { if (sw.getAttribute("aria-pressed") === "true") return; const on = sw.dataset.on === "1", key = sw.dataset.switch;
+    const label = key === "desk_off" ? (on ? "Desk AI is paused for every company." : "Desk AI is running again.") : (on ? "Sending is paused for every company. Approved emails stay queued." : "Sending is back on.");
+    return safetyDo(() => auth.setPlatformSwitch(key, on), label); }
+  const rt = e.target.closest("[data-retry]");
+  if (rt) { rt.disabled = true; try { await auth.retryEmail(rt.dataset.retry); const r = await auth.sendQueuedEmail(); outboxNote = r.message || (r.sent ? "Sent." : r.failed ? "Still not sent. Check the address." : ""); }
+    catch (x) { if (auth.isSessionExpired(x)) return endSession("expired"); outboxNote = x.message; } OUTBOX = null; return renderTab(); }
+  if (e.target.closest('[data-v="sendNow"]')) { const r = await auth.sendQueuedEmail(); outboxNote = r.message || (r.status === "done" ? `Sent ${r.sent}${r.failed ? `, ${r.failed} not sent yet` : ""}.` : ""); OUTBOX = null; return renderTab(); }
 });
 $("#view").addEventListener("click", e => {
   const b = e.target.closest("[data-v],[data-vf]"); if (!b) return;
@@ -1693,7 +1747,9 @@ function extraView(head) {
         <div class="setting"><div><b style="font-weight:500">Sample workspace</b><small>A separate workspace of fictional people for demos. It never mixes with your own data.</small></div>
           <span class="pill p-mut">Demo access is granted by Clearstage</span></div></div>
       ${sampleAccessCard()}
+      ${outboxCard()}
       ${modulesAdminCard()}
+      ${safetyCard()}
       ${SECURITY_CARD}
       <div class="card"><h4><span class="kind">How Desk may act</span></h4>
         <div class="setting"><div><b style="font-weight:500">Drafts only</b><small>Nothing reaches a candidate or employee without a named approval</small></div><span class="pill p-ok">Working in preview</span></div>

@@ -71,6 +71,8 @@ Deno.serve(async (req) => {
 
     // C2: the live agent is allow-listed per company until pilots (switched on by Clearstage, not by users).
     const ctx = await rpc("desk_ai_context");
+    // Safety switch (founder order 26 Nov, item 6): Clearstage can pause Desk AI for every company at once.
+    if (ctx?.desk_off === true) return json(req, { reply: "Desk is paused by Clearstage for a short while. Nothing was changed. Approvals and screens still work.", cards: [], blocked: "desk_off" });
     if (ctx?.desk_enabled !== true) return json(req, { error: "The live Desk agent isn't switched on for your company yet. It's in a closed beta." }, 403);
     // Key by company: the sample company uses the free key, every real company the paid key, never a free one.
     let pick: { key: string; tier: string };

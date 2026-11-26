@@ -233,6 +233,24 @@ export async function deleteCv(cvFileId) {
   if (rm.error) throw new Error(plainError(rm.error.message || "Couldn't remove the file"));
   return rpc("desk_delete_cv", { p_cv_file: cvFileId });
 }
+/* ----- Email (item 3) and the platform safety switches (item 6) ----- */
+/** Ask the send-email function to send this company's queued, approved emails. Never throws: returns a status. */
+export async function sendQueuedEmail() {
+  if (!LIVE) return { status: "demo" };
+  try {
+    const c = await client(); const { data } = await c.auth.getSession();
+    if (!data.session) return { status: "signed_out" };
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, { method: "POST",
+      headers: { Authorization: `Bearer ${data.session.access_token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: "{}" });
+    const j = await r.json().catch(() => ({}));
+    return r.ok && !j.error ? j : { status: "error", message: plainError(j.error || `Email error ${r.status}`) };
+  } catch (e) { return { status: "error", message: e.message }; }
+}
+export async function companyOutbox() { return LIVE ? (await rpc("company_outbox", { p_limit: 20 })) ?? [] : []; }
+export async function retryEmail(id) { return rpc("email_retry", { p_id: id }); }
+export async function platformStatus() { return rpc("platform_status"); }
+export async function setPlatformSwitch(key, on) { return rpc("set_platform_switch", { p_key: key, p_on: on }); }
+export async function setPilotCap(n) { return rpc("set_pilot_cap", { p_n: n }); }
 export async function callDesk(body) {
   if (!LIVE) throw new Error("The live Desk agent needs a signed-in account.");
   const c = await client();

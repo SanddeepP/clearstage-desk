@@ -69,7 +69,8 @@ select 'event', (select id::text from audit_event where company_id = a.v::uuid o
 select 'member', (select id::text from member where company_id = a.v::uuid order by created_at desc limit 1) from iso a where a.k = 'A' union all
 select 'ecr', (select id::text from employee_change_request where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
 select 'interview', (select id::text from interview where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
-select 'cv_file', (select id::text from cv_file where company_id = a.v::uuid limit 1) from iso a where a.k = 'A';
+select 'cv_file', (select id::text from cv_file where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
+select 'msg', (select id::text from message where company_id = a.v::uuid order by created_at limit 1) from iso a where a.k = 'A';
 do $$ begin if exists (select 1 from iso where v is null) then raise exception 'FAILED: missing A id: %', (select string_agg(k, ',') from iso where v is null); end if; end $$;
 
 -- Fingerprint of all of A's data
@@ -283,12 +284,21 @@ insert into calls values
   ('cv_upload_roles',               $c$cv_upload_roles()$c$),
   ('desk_cv_result',                $c$desk_cv_result('{cv_file}')$c$),
   ('company_cvs',                   $c$company_cvs(200)$c$),
-  ('desk_delete_cv',                $c$desk_delete_cv('{cv_file}')$c$);
+  ('desk_delete_cv',                $c$desk_delete_cv('{cv_file}')$c$),
+  ('platform_flag',                 $c$platform_flag('sending_paused')$c$),
+  ('pilot_cap',                     $c$pilot_cap()$c$),
+  ('set_platform_switch',           $c$set_platform_switch('desk_off', true)$c$),
+  ('set_pilot_cap',                 $c$set_pilot_cap(10)$c$),
+  ('platform_status',               $c$platform_status()$c$),
+  ('email_claim',                   $c$email_claim(50)$c$),
+  ('email_result',                  $c$email_result('{msg}', true, 'iso', null)$c$),
+  ('email_retry',                   $c$email_retry('{msg}')$c$),
+  ('company_outbox',                $c$company_outbox(100)$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);
 insert into pure values ('ctc_breakup'), ('ctc_fix'), ('ctc_inputs'), ('wages_check'), ('rule_row'), ('rule_value'), ('has_statutory_pack'), ('module_keys'), ('module_default'), ('module_states_allowed'), ('looks_like_name'), ('desk_blocked_text'),
-  ('cv_live_cap'), ('scr_item_exists'), ('scr_norm'), ('scr_quote_names_term'), ('scr_weights_ok'), ('scr_years');
+  ('cv_live_cap'), ('email_subject'), ('scr_item_exists'), ('scr_norm'), ('scr_quote_names_term'), ('scr_weights_ok'), ('scr_years');
 grant select on pure to authenticated;
 
 do $$ declare c record; sql text; res text; k record; state text; begin
@@ -313,6 +323,10 @@ do $$ begin
   if (select r.detail from iso_result r where r.name = 'can_approve') not in ('false', 'null') then raise exception 'FAILED: can_approve(A) is true for B'; end if;
   if (select r.detail from iso_result r where r.name = 'is_admin') not in ('false', 'null') then raise exception 'FAILED: is_admin(A) is true for B'; end if;
   if (select r.detail from iso_result r where r.name = 'has_role') not in ('false', 'null') then raise exception 'FAILED: has_role(A, super_admin) is true for B'; end if;
+  if (select r.outcome from iso_result r where r.name = 'set_platform_switch') <> 'refused' or (select r.outcome from iso_result r where r.name = 'set_pilot_cap') <> 'refused'
+     or (select r.outcome from iso_result r where r.name = 'platform_status') <> 'refused' then raise exception 'FAILED: B used a platform switch'; end if;
+  if (select r.outcome from iso_result r where r.name = 'email_result') <> 'refused' or (select r.outcome from iso_result r where r.name = 'email_retry') <> 'refused' then
+    raise exception 'FAILED: B changed A''s email'; end if;
   if (select r.detail from iso_result r where r.name = 'cv_folder_open') <> 'false' then raise exception 'FAILED: cv_folder_open(A) is true for B'; end if;
   if (select r.detail from iso_result r where r.name = 'desk_cv_result') <> 'null' then raise exception 'FAILED: desk_cv_result(A''s CV) returned something to B'; end if;
 end $$;
