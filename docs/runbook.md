@@ -14,3 +14,10 @@ Operational notes for the founder. The full on-call runbook (CTO deliverable E3,
 - An email with a staff login can't also be an Employee login, and an Employee login can't create a workspace.
 - Changes employees ask for (`request_profile_change`) apply only when HR or a Super admin approves them (`decide_profile_change`); every step is in the audit log.
 - The public demo has five role logins (`admin@`, `hr@`, `recruiter@`, `manager@`, `employee@acme.demo`). They exist only in the signed-out demo, never in the database.
+
+## Live CV screening (FA-014, 26 Nov)
+- Clearstage switches it on per real company: Settings → Modules → choose the company → **Live CV screening: On**. Logged in that company's audit (`cv_live_set`). Until the founder approves more pilots (FA-015) only one real company can be on at a time; the database refuses a second (`cv_live_cap()` = 1).
+- In that company, Upload in Ask Desk takes one PDF or DOCX (≤ 5 MB): pick the role (only roles with a confirmed requirements card), type the candidate's name, tick that they agreed to share their CV, Screen. The file goes to the private `cvs` bucket at `<company id>/<random id>.pdf|docx`, is queued (`desk_enqueue_cv`) and screened by `screen-cv` on `GEMINI_API_KEY_PAID` only.
+- Before the AI sees it, the text is masked: name, emails, phones, links, addresses (city kept), dates of birth, protected words, and college names (keyword rule + 3,500 AISHE institution names, `lib/aishe.js`, MIT-licensed source; regenerate with `scripts/aishe-names.py`).
+- **Delete CV** on the result card removes the stored file first, then `desk_delete_cv` removes the file record, screening job, masked text, quotes, score and cached AI answer. The candidate stays on the role (deleting a person is the DPDP delete, item 8). The database refuses to delete the record while the file is still stored.
+- Switching off: same switch → Off. Stored CVs stay until deleted or the retention job removes them.

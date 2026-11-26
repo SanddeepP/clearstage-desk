@@ -103,7 +103,9 @@ set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000001';
 reset request.jwt.claim.session_id;
 do $$ begin if (current_member()).company_id::text <> (select v from iso where k = 'B') then raise exception 'FAILED: not acting as company B'; end if; end $$;
 -- B gets its own data, so its tools have something to work on
-reset role; select 'B sample data (fixture)', desk_load_sample_data() is not null; set role authenticated;
+reset role; select 'B sample data (fixture)', desk_load_sample_data() is not null;
+update company set cv_live = true where id = (select v::uuid from iso where k = 'B');   -- B may store CVs in its own folder (021)
+set role authenticated;
 
 -- 1. Tables: read, update, delete, insert, and moving B's own rows into A
 do $$ declare t record; n bigint; a uuid := (select v::uuid from iso where k = 'A'); b uuid := (select v::uuid from iso where k = 'B');
@@ -180,7 +182,7 @@ do $$ declare n bigint; a text := (select v from iso where k = 'A'); b text := (
   exception when insufficient_privilege then null; end;
   begin delete from storage.objects where bucket_id = 'cvs' and name like a || '/%'; get diagnostics n = row_count; if n <> 0 then raise exception 'FAILED: B deleted A''s files'; end if;
   exception when insufficient_privilege then null; end;
-  insert into storage.objects(bucket_id, name) values ('cvs', b || '/own-file.pdf');
+  insert into storage.objects(bucket_id, name, owner) values ('cvs', b || '/own-file.pdf', auth.uid());
   select count(*) into n from storage.objects where bucket_id = 'cvs' and name = b || '/own-file.pdf'; if n <> 1 then raise exception 'FAILED: B can''t use its own folder'; end if;
 end $$;
 
@@ -273,12 +275,20 @@ insert into calls values
   ('hs_doc_kind',                   $c$hs_doc_kind('appointment_letter')$c$),
   ('hs_document',                   $c$hs_document('{doc}')$c$),
   ('hs_task_kind',                  $c$hs_task_kind('it_setup')$c$),
-  ('hs_subject',                    $c$hs_subject('person', '{person}')$c$);
+  ('hs_subject',                    $c$hs_subject('person', '{person}')$c$),
+  ('set_cv_live',                   $c$set_cv_live('{A}', false)$c$),
+  ('cv_screening_enabled',          $c$cv_screening_enabled()$c$),
+  ('cv_folder_open',                $c$cv_folder_open('{A}')$c$),
+  ('cv_file_paths',                 $c$(select string_agg(p, ',') from cv_file_paths() p)$c$),
+  ('cv_upload_roles',               $c$cv_upload_roles()$c$),
+  ('desk_cv_result',                $c$desk_cv_result('{cv_file}')$c$),
+  ('company_cvs',                   $c$company_cvs(200)$c$),
+  ('desk_delete_cv',                $c$desk_delete_cv('{cv_file}')$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);
 insert into pure values ('ctc_breakup'), ('ctc_fix'), ('ctc_inputs'), ('wages_check'), ('rule_row'), ('rule_value'), ('has_statutory_pack'), ('module_keys'), ('module_default'), ('module_states_allowed'), ('looks_like_name'), ('desk_blocked_text'),
-  ('scr_item_exists'), ('scr_norm'), ('scr_quote_names_term'), ('scr_weights_ok'), ('scr_years');
+  ('cv_live_cap'), ('scr_item_exists'), ('scr_norm'), ('scr_quote_names_term'), ('scr_weights_ok'), ('scr_years');
 grant select on pure to authenticated;
 
 do $$ declare c record; sql text; res text; k record; state text; begin
@@ -303,6 +313,8 @@ do $$ begin
   if (select r.detail from iso_result r where r.name = 'can_approve') not in ('false', 'null') then raise exception 'FAILED: can_approve(A) is true for B'; end if;
   if (select r.detail from iso_result r where r.name = 'is_admin') not in ('false', 'null') then raise exception 'FAILED: is_admin(A) is true for B'; end if;
   if (select r.detail from iso_result r where r.name = 'has_role') not in ('false', 'null') then raise exception 'FAILED: has_role(A, super_admin) is true for B'; end if;
+  if (select r.detail from iso_result r where r.name = 'cv_folder_open') <> 'false' then raise exception 'FAILED: cv_folder_open(A) is true for B'; end if;
+  if (select r.detail from iso_result r where r.name = 'desk_cv_result') <> 'null' then raise exception 'FAILED: desk_cv_result(A''s CV) returned something to B'; end if;
 end $$;
 reset role;
 

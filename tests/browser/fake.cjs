@@ -66,11 +66,23 @@ module.exports.FAKE = `(() => {
         (F.people ||= []).push({ id: 'm-new-' + F.people.length, name: args.p_name, email: args.p_email, roles: args.p_roles, see_pay: args.p_see_pay, offer_approver: args.p_offer_approver, is_me: false, login: 'invited' });
         return res({ email: args.p_email, pending: true, roles: args.p_roles });
       }
+      // FA-014 live CV screening
+      if (name === 'desk_enqueue_cv') return F.enqueueError ? res(null, { message: F.enqueueError }) : res({ job_id: 41, cv_file_id: 'cvf-1' });
+      if (name === 'desk_cv_result') return res(F.cvResult ? { ...F.cvResult, storage_path: (F.stored || [])[0] || F.cvResult.storage_path } : null);
+      if (name === 'desk_delete_cv') return (F.stored || []).length ? res(null, { message: 'Remove the file first, then delete the record' }) : res({ deleted: true });
+      if (name === 'set_cv_live') {
+        if (F.cvLiveError) return res(null, { message: F.cvLiveError });
+        const co = (F.rpcData.platform_companies || []).find(c => c.id === args.p_company); if (co) co.cv_live = args.p_on;
+        return res({ company_id: args.p_company, cv_live: args.p_on });
+      }
       if (F.rpcData && name in F.rpcData) return res(F.rpcData[name]);
       return res(null);
     },
     from: query,
     functions: { invoke: () => res({}) },
+    storage: { from: bucket => ({
+      upload: (path, file, opts) => { F.calls.push({ storage: 'upload', bucket, path, type: opts?.contentType, size: file?.size }); (F.stored ||= []).push(path); return res({ path }); },
+      remove: paths => { F.calls.push({ storage: 'remove', bucket, paths }); F.stored = (F.stored || []).filter(x => !paths.includes(x)); return res([]); } }) },
   }) };
 })();`;
 /** Opens the app with the fake client. fake: { session, uid, email, signedInAt, workspaces, members, admin, rpcData, deskReply, … } */

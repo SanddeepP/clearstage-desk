@@ -956,8 +956,8 @@ function openCandidateNoEcho(name) { const p = person(name); say(`<b>${esc(name)
 
 $("#ask").addEventListener("submit", e => { e.preventDefault(); const v = $("#q").value.trim(); if (!v) return; if (currentTab !== "desk") location.hash = "desk"; me(v); $("#q").value = ""; route(v); });
 $("#file").addEventListener("change", e => {
-  if (!isSample()) { const f = e.target.files?.[0]; e.target.value = ""; if (currentTab !== "desk") location.hash = "desk";
-    if (f) { me(`Uploaded ${f.name}`); later(() => say(`Live CV upload arrives with go-live, so I didn't read or keep <b>${esc(f.name)}</b>.`)); } return; }
+  if (!isSample()) { const fs = [...(e.target.files || [])]; e.target.value = ""; if (currentTab !== "desk") location.hash = "desk";
+    if (fs[0]) liveCvUpload(fs); return; }
   const files = [...e.target.files]; e.target.value = "";
   // QA-024: PDF, DOCX and ZIP all go through the same screening pipeline, for the role in the current context
   if (files.some(f => /\.(zip|pdf|docx)$/i.test(f.name))) { if (currentTab !== "desk") location.hash = "desk"; return SCR.upload(files.filter(f => /\.(zip|pdf|docx)$/i.test(f.name))); }
@@ -967,6 +967,76 @@ $("#file").addEventListener("change", e => {
   me(`Uploaded ${f.name}`);
   later(() => say(`This preview only works with the fictional sample CVs (PDF, DOCX or the sample ZIP), so I didn't read or keep <b>${esc(f.name)}</b>. Real CVs need the live AI and stay blocked until it runs in India.`));
 });
+/* ----- Live CV screening for a real company (FA-014). Clearstage switches it on per company; one CV at a time. ----- */
+async function liveCvUpload(files) {
+  const f = files[0];
+  me(`Uploaded ${f.name}`);
+  if (!auth.LIVE) return later(() => say(`Live CV screening needs a signed-in account, so I didn't read or keep <b>${esc(f.name)}</b>.`));
+  if (files.length > 1) return say("Live screening takes one CV at a time for now. Upload them one by one.");
+  const bad = auth.cvFileProblem(f); if (bad) return say(`${esc(bad)} I didn't read or keep <b>${esc(f.name)}</b>.`);
+  let on = false, roles = [];
+  try { on = await auth.cvScreeningEnabled(); if (on) roles = await auth.cvUploadRoles(); }
+  catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); return say(esc(e.message)); }
+  if (!on) return say(`Live CV screening isn't switched on for your company yet, so I didn't read or keep <b>${esc(f.name)}</b>. Clearstage switches it on per company.`);
+  if (!roles.length) return say(`Confirm a role's requirements card first: CVs are screened against it. I didn't keep <b>${esc(f.name)}</b>.`);
+  const uid = Math.random().toString(36).slice(2, 8);
+  const d = desk(`<div class="card" data-cvsheet><h4><span class="kind">Screen a CV</span>${esc(f.name)} <span class="pill p-mut">${Math.max(1, Math.round(f.size / 1024))} KB</span></h4><div class="c">
+    <form class="cvform" novalidate style="display:grid;gap:12px">
+      <label class="field" for="cvRole${uid}">Role<select id="cvRole${uid}" data-cv="role">${roles.map(r => `<option value="${esc(r.role_id)}" data-req="${esc(r.requirement_id)}">${esc(r.title)}${r.city ? " · " + esc(r.city) : ""} (requirements v${esc(r.version)})</option>`).join("")}</select></label>
+      <label class="field" for="cvName${uid}">Candidate's full name<input id="cvName${uid}" data-cv="name" maxlength="120" autocomplete="off" required><span class="hint">Used to hide their name from the AI, along with emails, phones, addresses and college names.</span></label>
+      <label class="field" for="cvEmail${uid}">Email (optional)<input id="cvEmail${uid}" data-cv="email" type="email" maxlength="160" autocomplete="off"></label>
+      <label class="field" for="cvPhone${uid}">Phone (optional)<input id="cvPhone${uid}" data-cv="phone" type="tel" maxlength="20" autocomplete="off"></label>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px"><input type="checkbox" data-cv="consent" style="margin-top:3px"> This person agreed to share their CV with us for this role.</label>
+      <p class="note" data-cv="msg" role="status"></p>
+      <div class="row"><button class="btn primary" type="submit">Screen this CV</button><button class="btn" type="button" data-cv="cancel">Cancel</button></div>
+    </form></div></div>`);
+  const card = d.querySelector("[data-cvsheet]"), q = k => card.querySelector(`[data-cv="${k}"]`);
+  q("cancel").onclick = () => { card.remove(); say(`Cancelled. I didn't keep <b>${esc(f.name)}</b>.`); };
+  card.querySelector("form").onsubmit = async ev => {
+    ev.preventDefault();
+    const name = q("name").value.trim(), msg = q("msg");
+    if (name.length < 2) { msg.textContent = "Add the candidate's full name."; return q("name").focus(); }
+    if (!q("consent").checked) { msg.textContent = "Tick the box once the person has agreed to share their CV."; return q("consent").focus(); }
+    const opt = q("role").selectedOptions[0];
+    card.querySelectorAll("button,input,select").forEach(x => x.disabled = true); msg.textContent = "Reading and screening the CV…";
+    try {
+      const res = await auth.uploadCv({ file: f, companyId: profile?.companyId, roleId: opt.value, requirementId: opt.dataset.req, name, email: q("email").value.trim(), phone: q("phone").value.trim(), consent: true });
+      card.remove(); showCvResult(res);
+    } catch (e2) {
+      if (auth.isSessionExpired(e2)) return endSession("expired");
+      msg.textContent = e2.message; card.querySelectorAll("button,input,select").forEach(x => x.disabled = false);
+    }
+  };
+}
+function cvResultCard(r) {
+  const sc = r.score, stars = sc?.stars ? "★".repeat(sc.stars) + "☆".repeat(5 - sc.stars) : "";
+  const must = r.requirements?.must || [], ev = r.evidence || [];
+  const quote = id => ev.filter(e => e.item === id);
+  const head = r.readable === false || sc?.label ? `<span class="pill p-warn">Needs a human look</span>`
+    : sc?.fit != null ? `<span class="pill ${sc.under50 ? "p-late" : "p-ok"}" aria-label="${sc.stars} of 5 stars">${stars}</span> <span class="pill p-mut">Fit ${sc.fit}</span>`
+    : `<span class="pill p-warn">${r.status === "needs_human" ? "Needs a human look" : "Screening"}</span>`;
+  const rows = must.map(m => { const qs = quote(m.id); return `<div class="item"><span class="pill ${qs.length ? "p-ok" : "p-late"}">${qs.length ? "Met" : "Gap"}</span><div class="t">${esc(m.label)}${qs.map(x => `<small>“${esc(x.quote)}” · ${esc(x.section)}</small>`).join("")}</div></div>`; }).join("");
+  return `<div class="card" data-cvresult="${esc(r.cv_file_id)}"><h4><span class="kind">CV screened</span>${esc(r.name)} · ${esc(r.role)} ${head}</h4>
+    ${sc?.must_total ? `<div class="c"><span class="note">Must-haves met: ${sc.must_met} of ${sc.must_total}${sc.years != null ? ` · ${esc(sc.years)} years of dated experience` : ""}. Quotes are checked word for word against the CV; the score is computed by the database, not the AI.</span></div>` : ""}
+    ${rows}
+    ${r.screen_error ? `<div class="c"><p class="note">${esc(r.screen_error)}</p></div>` : ""}
+    <div class="c"><div class="row"><button class="btn" type="button" data-cvdel>Delete CV</button><span class="note">Removes the file, the hidden-details copy the AI read, the quotes and the score. ${esc(r.name)} stays on the role.</span></div></div></div>`;
+}
+function showCvResult(r) {
+  const d = desk(cvResultCard(r));
+  const card = d.querySelector("[data-cvresult]");
+  card.querySelector("[data-cvdel]").onclick = ev => {
+    const row = ev.target.closest(".row");
+    if (row.querySelector("[data-cvdelyes]")) return;
+    row.insertAdjacentHTML("beforeend", `<span class="note">Delete this CV for good?</span><button class="btn primary" type="button" data-cvdelyes>Yes, delete</button><button class="btn" type="button" data-cvdelno>Keep it</button>`);
+    row.querySelector("[data-cvdelno]").onclick = () => { row.querySelector("[data-cvdelyes]").remove(); row.querySelector("[data-cvdelno]").remove(); row.lastElementChild.remove(); };
+    row.querySelector("[data-cvdelyes]").onclick = async b => {
+      row.querySelectorAll("button").forEach(x => x.disabled = true);
+      try { await auth.deleteCv(r.cv_file_id); card.outerHTML = `<div class="card"><div class="c">Deleted the CV <b>${esc(r.file_name)}</b>: the file, the copy the AI read, the quotes and the score. ${esc(r.name)} is still on ${esc(r.role)}.</div></div>`; }
+      catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); say(esc(e.message)); row.querySelectorAll("button").forEach(x => x.disabled = false); }
+    };
+  };
+}
 // Demo controls (UI v2: Settings → Demo, only for demo accounts)
 function setMode(m) {
   if (mode === m) return;
@@ -1115,6 +1185,8 @@ function modulesAdminCard() {
       <select id="modCompany" aria-label="Company">${COMPANIES.map(c => `<option value="${c.id}" ${c.id === co.id ? "selected" : ""}>${esc(c.name)}${c.is_sample ? " (sample)" : ""}</option>`).join("")}</select></div>
     ${mods.GROUPS.map(g => g.modules.map(k => `<div class="setting"><div><b style="font-weight:500">${esc(mods.MODULES[k].name)}</b><small>${esc(g.label)}</small></div>
       <select data-modstate="${k}" aria-label="${esc(mods.MODULES[k].name)} state" ${ALLOWED(k).length < 2 ? "disabled" : ""}>${ALLOWED(k).map(s => `<option value="${s}" ${co.modules[k] === s ? "selected" : ""}>${label[s]}</option>`).join("")}</select></div>`).join("")).join("")}
+    ${co.is_sample ? "" : `<div class="setting"><div><b style="font-weight:500">Live CV screening</b><small>Real CVs, paid AI key only, every file deletable from the app. One company at a time until the founder approves more pilots (FA-015). Logged in that company's audit.</small></div>
+      <select data-cvlive aria-label="Live CV screening">${[["off", "Off"], ["on", "On"]].map(([v, l]) => `<option value="${v}" ${(co.cv_live ? "on" : "off") === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>`}
     ${modNote ? `<p class="note" role="status" style="padding:0 16px">${esc(modNote)}</p>` : ""}</div>`;
 }
 async function setModule(k, state) {
@@ -1125,6 +1197,13 @@ async function setModule(k, state) {
     modNote = `${mods.MODULES[k].name} is now ${state === "soon" ? "Coming soon" : state === "preview" ? "Preview" : "Live"} for ${co?.name}.`;
     if (profile?.companyId === ADMIN_CO) { MODS_OWN = mods.states(await auth.myModules()); paintModules(); }
   } catch (e) { if (auth.isSessionExpired(e)) { modBusy = false; return endSession("expired"); } modNote = e.message; }
+  modBusy = false; COMPANIES = null; refreshCompanies();
+}
+async function setCvLive(on) {
+  if (modBusy) return; modBusy = true;
+  const co = COMPANIES?.find(c => c.id === ADMIN_CO);
+  try { await auth.setCvLive(ADMIN_CO, on); modNote = `Live CV screening is now ${on ? "on" : "off"} for ${co?.name}.`; }
+  catch (e) { if (auth.isSessionExpired(e)) { modBusy = false; return endSession("expired"); } modNote = e.message; }
   modBusy = false; COMPANIES = null; refreshCompanies();
 }
 function moduleInterestCard() {
@@ -1457,6 +1536,7 @@ $("#view").addEventListener("submit", e => {
 $("#view").addEventListener("change", e => {
   if (e.target.id === "modCompany") { ADMIN_CO = e.target.value; modNote = ""; return renderTab(); }
   if (e.target.dataset?.modstate) return setModule(e.target.dataset.modstate, e.target.value);
+  if (e.target.dataset && "cvlive" in e.target.dataset) return setCvLive(e.target.value === "on");
 });
 $("#view").addEventListener("click", e => {
   const b = e.target.closest("[data-v],[data-vf]"); if (!b) return;

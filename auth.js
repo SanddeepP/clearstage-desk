@@ -185,6 +185,54 @@ export async function updateMyName(user, name) {
   const p = store.get("profile:" + user.email) || memProfile; if (p) { p.name = name; store.set("profile:" + user.email, p); }
   return { full_name: name };
 }
+/* ----- Live CV screening (FA-014): one CV at a time, into the company's own private folder ----- */
+export async function cvScreeningEnabled() { return LIVE ? (await rpc("cv_screening_enabled")) === true : false; }
+export async function cvUploadRoles() { return LIVE ? (await rpc("cv_upload_roles")) ?? [] : []; }
+export async function companyCvs() { return LIVE ? (await rpc("company_cvs", { p_limit: 50 })) ?? [] : []; }
+export async function cvResult(cvFileId) { return rpc("desk_cv_result", { p_cv_file: cvFileId }); }
+export async function setCvLive(companyId, on) { return rpc("set_cv_live", { p_company: companyId, p_on: on }); }
+export const CV_MAX_BYTES = 5 * 1024 * 1024;
+export const CV_TYPES = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+/** What's wrong with this file for live screening, or "" when it can go. */
+export function cvFileProblem(f) {
+  const ext = String(f?.name || "").split(".").pop().toLowerCase();
+  if (!CV_TYPES[ext]) return "Live screening takes one PDF or DOCX at a time.";
+  if (f.size > CV_MAX_BYTES) return "That file is over 5 MB.";
+  if (!f.size) return "That file is empty.";
+  return "";
+}
+async function sha256Hex(buf) { const h = await crypto.subtle.digest("SHA-256", buf); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
+/** Add the candidate (with their OK recorded), store the file, queue it and screen it. Returns the result card data.
+ *  If anything fails after the file is stored and before it's queued, the file is removed again. */
+export async function uploadCv({ file, companyId, roleId, requirementId, name, email, phone, consent }) {
+  if (!consent) throw new Error("Confirm the person agreed to share their CV first.");
+  const problem = cvFileProblem(file); if (problem) throw new Error(problem);
+  const c = await client();
+  const ext = file.name.split(".").pop().toLowerCase();
+  const sha = await sha256Hex(await file.arrayBuffer());
+  const cand = await rpc("desk_add_candidate", { p_name: name, p_role_id: roleId, p_email: email || null, p_phone: phone || null, p_consent: true });
+  const path = `${companyId}/${crypto.randomUUID()}.${ext}`;
+  const up = await c.storage.from("cvs").upload(path, file, { contentType: CV_TYPES[ext], upsert: false });
+  if (up.error) throw new Error(plainError(up.error.message || "Couldn't store the CV"));
+  let job;
+  try { job = await rpc("desk_enqueue_cv", { p_application: cand.application_id, p_requirement: requirementId, p_path: path, p_name: file.name, p_sha: sha, p_source: "upload" }); }
+  catch (e) { await c.storage.from("cvs").remove([path]).catch(() => {}); throw e; }
+  const { data } = await c.auth.getSession();
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/screen-cv`, { method: "POST",
+    headers: { Authorization: `Bearer ${data.session?.access_token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ job_id: job.job_id }) });
+  const j = await r.json().catch(() => ({}));
+  const res = await cvResult(job.cv_file_id);
+  return { ...res, screen_error: !r.ok || j.error ? plainError(j.error || `Screening error ${r.status}`) : null };
+}
+/** Delete a CV: the stored file first, then its record, screening, quotes and score (the candidate stays). */
+export async function deleteCv(cvFileId) {
+  const c = await client();
+  const res = await cvResult(cvFileId);
+  if (!res) throw new Error("That CV isn't in your workspace");
+  const rm = await c.storage.from("cvs").remove([res.storage_path]);
+  if (rm.error) throw new Error(plainError(rm.error.message || "Couldn't remove the file"));
+  return rpc("desk_delete_cv", { p_cv_file: cvFileId });
+}
 export async function callDesk(body) {
   if (!LIVE) throw new Error("The live Desk agent needs a signed-in account.");
   const c = await client();

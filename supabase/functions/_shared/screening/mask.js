@@ -1,7 +1,10 @@
 // Hide personal details in code before any AI call (CTO rule 2, 15 Nov).
 // Removed: name (CV header and candidate record), email, phone, photos, date of birth or age, gender,
-// marital status, religion, caste, address beyond city, college names. Also links (they often carry a name)
+// marital status, religion, caste, address beyond city, college names (keyword rule plus the AISHE list of Indian
+// institutions, lib/aishe.js). Also links (they often carry a name)
 // and parent or spouse names. The AI gets only the cleaned text and the confirmed requirements.
+
+import { AISHE_NAMES } from "./aishe.js";
 
 export const CITIES = ["Hyderabad", "Secunderabad", "Bengaluru", "Bangalore", "Chennai", "Pune", "Mumbai", "Navi Mumbai", "Delhi", "New Delhi",
   "Gurugram", "Gurgaon", "Noida", "Kolkata", "Ahmedabad", "Jaipur", "Kochi", "Coimbatore", "Visakhapatnam", "Vijayawada", "Warangal",
@@ -9,7 +12,7 @@ export const CITIES = ["Hyderabad", "Secunderabad", "Bengaluru", "Bangalore", "C
 
 const PERSONAL_LABELS = /^\s*(?:date\s+of\s+birth|d\.?\s?o\.?\s?b\.?|born(?:\s+on)?|birth\s*date|age|gender|sex|marital\s+status|religion|caste|category|community|nationality|father'?s?\s+name|mother'?s?\s+name|spouse'?s?\s+name|husband'?s?\s+name|wife'?s?\s+name|photo(?:graph)?|languages?\s+known|passport(?:\s+no\.?)?|aadhaa?r(?:\s+no\.?)?|pan(?:\s+no\.?)?)\s*[:\-–]/i;
 const ADDRESS_LABEL = /^\s*(?:(?:permanent|current|present|residential|postal)\s+)?address\s*[:\-–]\s*(.*)$/i;
-const INSTITUTION = /\b(?:university|universit[yi]|college|institute|institution|iit|iiit|nit|bits|vit|srm|school|vidyalaya|vidyapeeth|academy|polytechnic|mahavidyalaya|campus)\b/i;
+const INSTITUTION = /\b(?:university|universit[yi]|college|institute|institution|iit|iiit|nit|bits|vit|srm|school|vidyalaya|vidyapeeth|academy|polytechnic|mahavidyalaya|campus|mahavid\w*|vishwavid\w*|vishvavid\w*|vidhyalay\w*|vidyalay\w*|vidyapith|shikshan|sansthan)\b/i;
 const EDUCATION_HEAD = /^\s*(?:education|academic(?:s| qualifications?| background)?|qualifications?)\s*:?\s*$/i;
 const SECTION_HEAD = /^\s*[A-Z][A-Za-z &/]{2,40}:?\s*$/;
 const RELIGION = /\b(?:hindu(?:ism)?|muslim|islam(?:ic)?|christian(?:ity)?|sikh(?:ism)?|jain(?:ism)?|buddhis[tm]|parsi|zoroastrian|jewish)\b/gi;
@@ -27,6 +30,31 @@ const PHOTO = /\[(?:photo|image|picture|img)[^\]]*\]|<img[^>]*>|!\[[^\]]*\]\([^)
 const DEGREE = /^(?:\(?\s*)?(?:b\.?\s?tech|b\.?\s?e\.?|m\.?\s?tech|m\.?\s?e\.?|b\.?\s?sc|m\.?\s?sc|b\.?\s?com|m\.?\s?com|bca|mca|bba|mba|pgdm|b\.?\s?a\.?|m\.?\s?a\.?|ph\.?\s?d|diploma|bachelor|master|post\s*graduate|graduate|intermediate|class\s+(?:x|xii|10|12)|12th|10th|ssc|hsc|cbse|icse|board)\b/i;
 const SUBJECT = /^(?:in\s+)?(?:computer science|computer applications|information technology|electronics|electrical|mechanical|civil|commerce|accounting|finance|economics|statistics|mathematics|physics|chemistry|business administration|management|data science|engineering)(?:\s+(?:and|&)\s+[a-z ]+)?$/i;
 const KEEP_IN_EDU = p => (SUBJECT.test(p.trim()) && !INSTITUTION.test(p)) || DEGREE.test(p.trim()) || /^\(?\s*(?:19|20)\d\d(?:\s*-\s*(?:19|20)\d\d)?\s*\)?$/.test(p.trim()) || /\b(?:cgpa|gpa|percentage|grade|distinction|first class)\b|\d+(?:\.\d+)?\s*(?:%|\/\s*10)/i.test(p) || CITIES.some(c => c.toLowerCase() === p.trim().toLowerCase());
+// AISHE names, indexed by their first two words (built once, on first use).
+let AISHE_IDX = null;
+function aisheIndex() {
+  if (AISHE_IDX) return AISHE_IDX;
+  AISHE_IDX = new Map();
+  for (const n of AISHE_NAMES.split("\n")) {
+    const w = n.split(" "), k = w[0] + " " + w[1];
+    if (!AISHE_IDX.has(k)) AISHE_IDX.set(k, []);
+    AISHE_IDX.get(k).push(w);
+  }
+  for (const v of AISHE_IDX.values()) v.sort((a, b) => b.length - a.length);
+  return AISHE_IDX;
+}
+/** Replace any AISHE institution name in one line with [college] (word for word, case and punctuation ignored). */
+export function maskAishe(line, onHit = () => {}) {
+  const idx = aisheIndex(), t = [...String(line).matchAll(/[A-Za-z0-9]+/g)].map(m => ({ w: m[0].toLowerCase(), s: m.index, e: m.index + m[0].length }));
+  let out = "", at = 0;
+  for (let i = 0; i < t.length - 1; i++) {
+    const hitW = (idx.get(t[i].w + " " + t[i + 1].w) || []).find(c => c.every((w, j) => t[i + j]?.w === w));
+    if (!hitW) continue;
+    const end = t[i + hitW.length - 1].e;
+    out += line.slice(at, t[i].s) + "[college]"; at = end; i += hitW.length - 1; onHit();
+  }
+  return out + line.slice(at);
+}
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -69,7 +97,7 @@ export function maskCv(text, names = []) {
       const parts = l.split(/\s*(?:,|\||–|—| - |;)\s*/);
       return parts.map(p => (INSTITUTION.test(p) ? (hit("college"), "[college]") : p)).join(", ");
     }
-    return l;
+    return maskAishe(l, () => hit("college"));
   });
   let out = lines.join("\n");
 

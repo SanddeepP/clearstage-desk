@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import * as unpdf from "unpdf";
 import mammoth from "mammoth";
 import { scoreCandidate, yearsFromRanges, newShortlist, offerToShortlist, leaveShortlist, pin, starFilter, overrideStars, HUMAN_LOOK, MAX_PINS, checkWeights, checkTerms, reasonsFor } from "../lib/screening.js";
-import { maskCv, leaks } from "../lib/mask.js";
+import { maskCv, leaks, maskAishe } from "../lib/mask.js";
+import { AISHE_NAMES } from "../lib/aishe.js";
 import { buildPrompt, verifyEvidence, cacheKey, sha256Hex, norm } from "../lib/evidence.js";
 import { cvText } from "../lib/cvtext.js";
 import { screenOne } from "../lib/pipeline.js";
@@ -256,7 +257,7 @@ test("rejection clock counts working hours and pauses overnight and on Sunday", 
 });
 
 test("the screen-cv worker uses exactly the same screening code as the web app", () => {
-  for (const f of ["screening", "mask", "evidence", "cvtext"])
+  for (const f of ["screening", "mask", "evidence", "cvtext", "aishe"])
     assert.equal(readFileSync(new URL(`../supabase/functions/_shared/screening/${f}.js`, import.meta.url), "utf8"), readFileSync(new URL(`../lib/${f}.js`, import.meta.url), "utf8"), f);
 });
 
@@ -301,4 +302,13 @@ test("QA-018: only confirmed terms count; 'APIs' alone no longer counts as REST;
   assert.equal(v.evidence.length, 0); assert.deepEqual(v.unverified, ["m2"]);
   assert.throws(() => checkTerms({ ...BE, must: [{ id: "m1", label: "APIs", terms: ["API", "backend"] }] }), /specific word/);
   assert.doesNotThrow(() => checkTerms(BE));
+});
+
+test("FA-014: AISHE institution names are masked anywhere in a CV, everyday skills are not", () => {
+  assert.ok(AISHE_NAMES.split("\n").length > 3000, "the AISHE list is loaded");
+  assert.equal(maskAishe("Research intern at Zoological Survey of India, 2021"), "Research intern at [college], 2021");
+  const m = maskCv("Asha Verma\nExperience\nProject trainee, Zoological Survey of India (2020)\nVolunteer at Gurukul Kangri Vishwavidyalaya\nSkills\nData science, computer science, information technology, customer support, career computer education", ["Asha Verma"]);
+  assert.ok(!/Zoological Survey/i.test(m.text) && !/Gurukul Kangri/i.test(m.text), m.text);
+  assert.ok(/Data science, computer science, information technology, customer support, career computer education/.test(m.text), "skills untouched: " + m.text);
+  assert.ok(m.removed.college >= 2);
 });

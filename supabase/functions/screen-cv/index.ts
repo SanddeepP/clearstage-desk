@@ -28,8 +28,10 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json(req, { error: "Use POST" }, 405);
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, publicKey(), { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } });
   const { data: u } = await sb.auth.getUser(); if (!u?.user) return json(req, { error: "Sign in first" }, 401);
-  const { data: allowed } = await sb.rpc("desk_live_enabled");
-  if (allowed !== true) return json(req, { error: "AI screening isn't switched on for your company yet. It's in a closed beta." }, 403);
+  // FA-014: a real company screens only when Clearstage has switched live CV screening on for it (company.cv_live);
+  // the sample company when its Desk is on. Real companies use the paid key only (pickKey).
+  const { data: allowed } = await sb.rpc("cv_screening_enabled");
+  if (allowed !== true) return json(req, { error: "Live CV screening isn't switched on for your company yet." }, 403);
   const rpc = async (name: string, args: Record<string, unknown> = {}) => { const { data, error } = await sb.rpc(name, args); if (error) throw new Error(error.message); return data; };
   const body = await req.json().catch(() => ({}));
   const job = await rpc("desk_claim_cv_job", { p_job: body.job_id ?? null });
