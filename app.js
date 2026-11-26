@@ -20,6 +20,14 @@ let pendingEmail = "", user = null, profile = null, resendTimer = null;
 $("#modeNote").textContent = auth.LIVE
   ? "Can't find the email? Check Spam or Gmail's Updates tab."
   : "Demo mode: email sending isn't connected yet, so your code appears on the next screen.";
+// Public demo (founder 26 Nov): one login per role. Tapping one fills the email and sends the code (shown on screen).
+if (!auth.LIVE) {
+  const box = $("#demoLogins");
+  box.innerHTML = `<p class="note">Demo logins, one per role (fictional people):</p><div class="demochips">${Object.entries(auth.DEMO_ACCOUNTS)
+    .map(([e, d]) => `<button class="btn" type="button" data-demo="${esc(e)}"><b>${esc(d.label)}</b><small>${esc(e)}</small></button>`).join("")}</div>`;
+  box.hidden = false;
+  box.addEventListener("click", e => { const b = e.target.closest("[data-demo]"); if (!b) return; $("#email").value = b.dataset.demo; $("#emailForm").requestSubmit(); });
+}
 if (auth.LIVE) auth.onSignedIn(async u => { if (verifying || freshSignIn || !$("#s-app").hidden || !$("#s-setup").hidden || resuming) return; await resume(u); });
 
 $("#emailForm").addEventListener("submit", async e => {
@@ -94,6 +102,7 @@ async function afterSignIn() {
   try { profile = await auth.getProfile(user); }
   catch (e) { if (auth.isSessionExpired(e)) return signOutNow("expired"); throw e; }
   if (!profile) { showSetup(); return; }
+  if (profile.employee) return openEmployee();
   openApp();
 }
 function showSetup() {
@@ -168,6 +177,7 @@ async function finishSignOut(reason) {
   const scope = signOutScope; signOutScope = "local";
   try { await auth.signOut(scope); } catch { /* still leave the app */ }
   user = null; profile = null; $("#email").value = "";
+  EMP = null; empEdit = null; empNote = ""; document.body.classList.remove("emp");
   const msg = { idle: MSG.idle, max: MSG.max, elsewhere: MSG.elsewhere, expired: auth.SESSION_EXPIRED }[reason] ?? (scope === "global" ? "Signed out on all devices." : "");
   const n = $("#signedOutNote"); n.textContent = msg; n.hidden = !msg;
   show("s-email");
@@ -230,7 +240,7 @@ function seed() {
 const roleOf = rid => D.roles.find(r => r.id === rid);
 const WHEN_ORDER = { Late: 0, Today: 1, "This week": 2, Done: 3 };
 function counts() {
-  const openTasks = D.tasks.filter(t => !t.done).sort((a, b) => WHEN_ORDER[a.when] - WHEN_ORDER[b.when]);
+  const openTasks = D.tasks.filter(t => !t.done && taskVisible(t)).sort((a, b) => WHEN_ORDER[a.when] - WHEN_ORDER[b.when]);
   const activeCands = D.people.filter(p => p.type === "Candidate" && p.stage !== "Closed" && p.stage !== "Hired");
   return {
     openTasks, lateTasks: openTasks.filter(t => t.when === "Late"),
@@ -257,6 +267,8 @@ const phoneLabel = () => profile?.phone ? `you · ${profile.phone}` : "you";
 const ownerName = o => o === "hr" ? (mode === "solo" ? "You" : "Ritu") : o === "lead" ? `${first()} (you)` : o;
 
 async function openApp() {
+  EMP = null; document.body.classList.remove("emp");
+  CREQ = null; EMPS = null; creqNote = ""; creqReject = null;
   await loadWorkspaces(); applyWorkspace();
   init(profile.setup === "lead_juniors" ? "lead" : "solo");
   show("s-app"); showTab();
@@ -279,7 +291,8 @@ function paint() {
   set("#t-roles", c.openRoles); set("#t-late", c.lateTasks.length); set("#t-join", c.joiners.length); set("#t-prob", c.probDue.length); set("#t-queue", D.pending.length);
   $("#t-late").classList.toggle("late", c.lateTasks.length > 0);
   $("#t-queue").hidden = mode !== "lead";
-  $("#who").textContent = !isSample() || mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
+  $("#who").textContent = profile?.demoLogin ? `You: ${profile.name} · ${profile.demoLogin}` : auth.LIVE && !isSample() && MYROLES?.roles?.length ? `You: ${first()} · ${roleText()}`
+    : !isSample() || mode === "solo" ? `You: ${first()} (HR & hiring)` : `Acting as Ritu (junior) · ${first()} approves`;
   const badge = (sel, n, label, hot) => { const el = $(sel); el.textContent = n || ""; el.title = n ? label : ""; el.setAttribute("aria-label", n ? label : ""); el.classList.toggle("hot", !!hot); };
   badge("#n-today", c.openTasks.length, plural(c.openTasks.length, "open task") + `, ${c.lateTasks.length} late`, c.lateTasks.length > 0);
   badge("#n-hiring", c.openRoles, plural(c.openRoles, "open role"));
@@ -554,7 +567,9 @@ async function loadWorkspaces() {
   COMPANIES = null; MI_COUNTS = null; modNote = "";
   ACCESS = null; accessNote = "";
   PEOPLE = null; MYROLES = null; peopleNote = ""; peopleEdit = null; peopleDraft = null;
+  CREQ = null; EMPS = null; creqNote = ""; creqReject = null;
   try { ADMIN = await auth.isPlatformAdmin(); } catch { ADMIN = false; }
+  try { MYROLES = await auth.myRoles(); } catch { MYROLES = null; }
   try { WS_LIST = await auth.workspaces(); } catch { WS_LIST = []; }
   const own = WS_LIST.find(w => !w.is_sample), sample = WS_LIST.find(w => w.is_sample);
   let pick = null; try { pick = localStorage.getItem("cs:ws:" + (user?.id || "")); } catch { /* blocked */ }
@@ -571,6 +586,7 @@ $("#wsSwitch").addEventListener("change", e => {
 function applyWorkspace() {
   $("#coLine").textContent = isSample() ? "Acme Fintech · 42 people · Hyderabad · sample data" : [WS?.name || profile?.company, WS?.city || profile?.city].filter(Boolean).join(" · ");
   $("#sampleBan").hidden = !isSample();                       // the grey sample banner only inside the sample company
+  applyRoleMenu();
 }
 // F4 interim (PM 21 Nov): chat cards show the FULL letter, never "…". Fictional sample company; template from the
 // Clearstage playbook, clause text awaiting legal review (CTO 21 Nov §4.4). One template for all, so they stay consistent.
@@ -812,7 +828,7 @@ function probation() {
 ACT.sendConf = b => approve(b, "Priya's confirmation letter", () => { const pr = person("Priya Nair"); pr.probation.status = "Confirmed"; pr.where = `Confirmed from ${T.dayShort(12)}`; closeTask("probation"); say(`Approved. ${PREVIEW_SENT}`); });
 
 function wrap() {
-  const open = D.tasks.filter(t => !t.done), late = open.filter(t => t.when === "Late").length;
+  const open = D.tasks.filter(t => !t.done && taskVisible(t)), late = open.filter(t => t.when === "Late").length;
   later(() => desk(`<div class="bubble">Here's your day.</div>
   <div class="card"><h4><span class="kind">End of day</span>${new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</h4>
    <div class="item"><span class="pill p-ok">Approved</span><div class="t">${approvalsOnly().length} item${approvalsOnly().length === 1 ? "" : "s"} approved today<small>${approvalsOnly().length ? approvalsOnly().map(a => esc(a.what) + " by " + esc(a.by)).join(" · ") : "Nothing approved yet"}</small></div></div>
@@ -865,6 +881,7 @@ async function liveTurn(t) {
 
 function route(t) {
   const mk = mods.moduleIntent(t);                        // module tabs: honest reply for anything not live, and the interest noted
+  if (mk && !canSee(mk === "hire" ? "hiring" : mk)) return later(() => say(esc(`${mods.MODULES[mk].name} isn't part of your access as ${roleText()}. Ask HR or your Super admin if you need it.`)));
   if (mk) {
     const st = curMods()[mk];
     if (st !== "live" && !(isSample() && st === "preview")) { noteInterest(mk, null, "desk"); return later(() => say(esc(mods.notLiveReply(mk, st)))); }
@@ -943,14 +960,14 @@ const V = { todayFilter: "All", hiringRole: null, q: "", type: "All", owner: "Al
 function showTab() {
   if (location.hash === "#joiners") { history.replaceState(null, "", "#onboard"); }   // the old "Joiners & probation" link
   const t = location.hash.slice(1);
-  currentTab = TABS.includes(t) ? t : "overview";
+  currentTab = TABS.includes(t) && canSee(t) ? t : homeTab();
   document.querySelectorAll(".sidenav a").forEach(a => a.dataset.tab === currentTab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   const onDesk = currentTab === "desk";
   $("#chatView").hidden = !onDesk; $("#view").hidden = onDesk; $("#composer").classList.toggle("compact", !onDesk);
   if (currentTab !== "people") V.personId = null;
   if (onDesk) { scroll(); $("#q").focus({ preventScroll: true }); } else renderTab();
 }
-window.addEventListener("hashchange", () => { if (!$("#s-app").hidden && D) showTab(); });
+window.addEventListener("hashchange", () => { if (!$("#s-app").hidden && D && !EMP) showTab(); });
 function withDesk(fn) { location.hash = "desk"; fn(); }
 
 const whenPill = w => ({ Late: "p-late", Today: "p-warn", "This week": "p-acc", Done: "p-ok" }[w] || "p-mut");
@@ -1114,6 +1131,9 @@ const roleBoxes = (pre, sel = [], pay = false, appr = false) => `<fieldset class
   <label><input type="checkbox" name="${pre}appr" ${appr ? "checked" : ""}> Offer approver <small>all roles for now</small></label></fieldset>`;
 const loginText = p => p.login === "yes" ? "Signed in" : p.login === "invited" ? "Invited · joins when they first sign in with this email" : "No login · WhatsApp nudges only";
 function peopleCard() {
+  if (!auth.LIVE && profile?.demoLogin) return `<div class="card" id="peopleRoles"><h4><span class="kind">People and roles</span><span class="pill p-mut">Demo logins</span></h4>
+    ${Object.entries(auth.DEMO_ACCOUNTS).map(([e, d]) => `<div class="setting"><div><b style="font-weight:500">${esc(d.name)}${d.name === profile.name ? " (you)" : ""}</b><small>${esc(e)}</small></div><span class="pill p-mut">${esc(d.label)}</span></div>`).join("")}
+    <div class="c"><p class="note">In the demo the roles are fixed. In a real workspace a Super admin changes roles here, and every change is logged.</p></div></div>`;
   if (!auth.LIVE || isSample()) return "";
   if (PEOPLE === null) { refreshPeople(); return `<div class="card" id="peopleRoles"><h4><span class="kind">People and roles</span></h4><div class="c"><p class="note">Loading people…</p></div></div>`; }
   const sa = isSuperAdmin();
@@ -1162,6 +1182,156 @@ async function savePeople(kind, form) {
   peopleBusy = false; PEOPLE = null; refreshPeople();
 }
 
+/* =================== MENUS BY ROLE (founder 26 Nov; roles spec §2) ===================
+   Each role sees only its menu items and screens. Until the role permissions ship after go-live, the database still
+   allows today's access underneath; this is the menu, not the lock. Several roles see everything any of them can. */
+const STAFF_TABS = {
+  super_admin: TABS, hr: TABS,
+  recruiter: ["desk", "today", "hiring", "people", "interviews", "approvals", "policies", "insights", "settings"],
+  manager: ["desk", "today", "hiring", "people", "interviews", "approvals", "onboard", "probation", "exit", "time", "payroll", "performance", "policies", "insights", "settings"],
+};
+function myRoleKeys() {
+  if (!auth.LIVE) return profile?.roles || ["super_admin", "hr"];              // a plain demo email is the company's HR owner
+  if (isSample()) return ["super_admin"];                                      // the sample company shows everything
+  return MYROLES?.roles?.length ? MYROLES.roles : ["super_admin", "hr"];
+}
+// Today shows each role its own items: joiner and probation tasks belong to Onboard and Probation (roles spec §2)
+const TASK_MODULE = { letter: "onboard", laptop: "onboard", kiranLetter: "onboard", probation: "probation" };
+const taskVisible = t => canSee(TASK_MODULE[t.key] || "hiring");
+const roleText = () => myRoleKeys().map(r => auth.ROLE_LABELS[r] || r).join(" + ");
+const canSee = tab => myRoleKeys().some(r => (STAFF_TABS[r] || []).includes(tab));
+const staffAdmin = () => myRoleKeys().some(r => r === "super_admin" || r === "hr");
+const homeTab = () => ["overview", "today", "desk"].find(canSee) || "today";
+function applyRoleMenu() {
+  const nav = document.querySelectorAll(".sidenav > *");
+  nav.forEach(el => { if (el.dataset.tab) el.hidden = !canSee(el.dataset.tab); });
+  let grp = null, any = false;                                                 // a group label only when something under it shows
+  nav.forEach(el => { if (el.classList.contains("grp")) { if (grp) grp.hidden = !any; grp = el; any = false; } else if (el.dataset.tab && !el.hidden) any = true; });
+  if (grp) grp.hidden = !any;
+  document.querySelectorAll(".strip a.tile").forEach(a => { const t = (a.getAttribute("href") || "").slice(1); a.classList.toggle("roleoff", !canSee(t)); });
+}
+const SECURITY_CARD = `<div class="card"><h4><span class="kind">Security</span></h4>
+        <div class="setting"><div><b style="font-weight:500">Session timeout</b><small>Signed out after 30 minutes without activity (warning at 25), and always after 12 hours</small></div><span class="pill p-ok">On</span></div>
+        <div class="setting"><div><b style="font-weight:500">Sign out on all devices</b><small>Ends every session for your account, on every browser and phone</small></div><button class="btn" type="button" data-v="signOutAll">Sign out everywhere</button></div></div>`;
+
+/* =================== EMPLOYEE VIEW (018; CTO Employee-login design) ===================
+   An employee sees only their own record. Changes to their details are requests HR approves. No menu, no Desk. */
+let EMP = null, empEdit = null, empNote = "", empBusy = false;
+const FIELD_LABEL = { phone: "Phone", email: "Personal email", address: "Address", emergency_contact: "Emergency contact" };
+const dshort = d => d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "";
+async function openEmployee() {
+  EMP = profile.employee; empEdit = null; empNote = "";
+  document.body.classList.add("emp");
+  show("s-app");
+  $("#chatView").hidden = true; $("#view").hidden = false;
+  $("#coLine").textContent = EMP.company || "";
+  $("#who").textContent = `You: ${EMP.profile?.name || profile.name} · Employee`;
+  $("#sampleBan").hidden = auth.LIVE;
+  $("#signedOutNote").hidden = true;
+  history.replaceState(null, "", "#me");
+  renderEmployee();
+  const fresh = freshSignIn; freshSignIn = false;
+  auth.sessionSignedInAt().then(t => guard.start(t ?? undefined, { fresh })).catch(() => guard.start(undefined, { fresh }));
+}
+async function refreshEmployee() {
+  try { EMP = await auth.myEmployee(); } catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); empNote = e.message; }
+  renderEmployee();
+}
+const reqPill = r => r.status === "pending" ? '<span class="pill p-warn">Waiting for HR</span>' : r.status === "approved" ? '<span class="pill p-ok">Approved</span>' : '<span class="pill p-late">Not approved</span>';
+function renderEmployee() {
+  if (!EMP) return;
+  const p = EMP.profile || {}, v = $("#view");
+  const pending = f => (EMP.requests || []).find(r => r.field === f && r.status === "pending");
+  const fieldRow = f => empEdit === f
+    ? `<div class="setting"><form class="roleform" id="empReqForm" data-field="${f}" novalidate><b style="font-weight:500">${FIELD_LABEL[f]}</b>
+        <input id="empNew" maxlength="300" aria-label="New ${esc(FIELD_LABEL[f].toLowerCase())}" placeholder="New ${esc(FIELD_LABEL[f].toLowerCase())}" value="">
+        <input id="empWhy" maxlength="300" aria-label="Reason (optional)" placeholder="Reason (optional), like “I moved house”">
+        <div class="row"><button class="btn primary" type="submit">Send to HR</button><button class="btn" type="button" data-v="empCancel">Cancel</button></div>
+        <p class="note">HR approves it before anything changes.</p></form></div>`
+    : `<div class="setting"><div><b style="font-weight:500">${FIELD_LABEL[f]}</b><small>${esc(p[f] || "Not given")}</small>${pending(f) ? `<small>Asked to change to “${esc(pending(f).new_value)}” · waiting for HR</small>` : ""}</div>
+        ${pending(f) ? '<span class="pill p-warn">Waiting for HR</span>' : `<button class="btn" type="button" data-v="empAsk" data-field="${f}">Ask to change</button>`}</div>`;
+  const about = [["Job title", p.title], ["Manager", p.manager], ["Joined", dshort(p.joined_on)], ["Probation ends", dshort(p.probation_ends_on)], ["Sign-in email", p.login_email]]
+    .filter(x => x[1]).map(([k, val]) => `<div class="setting"><div><b style="font-weight:500">${k}</b><small>${esc(val)}</small></div></div>`).join("");
+  const letters = (EMP.letters || []).map((l, i) => `<details class="setting empletter"><summary><b style="font-weight:500">${esc(l.kind === "appointment_letter" ? "Appointment letter" : l.kind === "confirmation_letter" ? "Confirmation letter" : l.kind.replace(/_/g, " "))}</b><small>Approved ${esc(dshort(l.approved_at))}</small></summary><pre class="letterbody">${esc(l.body || "")}</pre></details>`).join("");
+  const tasks = (EMP.tasks || []).map(t => `<div class="setting"><div><b style="font-weight:500">${esc(t.title)}</b>${t.due_at ? `<small>${t.status === "done" ? "Done" : "Due " + esc(dshort(t.due_at))}</small>` : ""}</div><span class="pill ${t.status === "done" ? "p-ok" : "p-mut"}">${t.status === "done" ? "Done" : "Open"}</span></div>`).join("");
+  const reqs = (EMP.requests || []).map(r => `<div class="setting"><div><b style="font-weight:500">${esc(r.label || FIELD_LABEL[r.field])}</b><small>${esc(r.old_value || "Not given")} → ${esc(r.new_value)}</small>${r.note ? `<small>HR's note: ${esc(r.note)}</small>` : ""}</div>${reqPill(r)}</div>`).join("");
+  v.innerHTML = `<div class="inner"><div class="vhead"><div><h2>${esc(p.name || "My profile")}</h2><p>${esc(EMP.company || "")} · only you can see this page</p></div></div>
+    ${empNote ? `<p class="note" role="status" id="empNote">${esc(empNote)}</p>` : ""}
+    <div class="card" id="empAbout"><h4><span class="kind">About me</span></h4>${about}</div>
+    <div class="card" id="empContact"><h4><span class="kind">My contact details</span></h4>${["phone", "email", "address", "emergency_contact"].map(fieldRow).join("")}
+      <div class="c"><p class="note">To change something, ask here. It goes to HR, and nothing changes until they approve.</p></div></div>
+    <div class="card" id="empRequests"><h4><span class="kind">My requests</span></h4>${reqs || '<div class="c"><p class="note">No requests yet.</p></div>'}</div>
+    <div class="card" id="empLetters"><h4><span class="kind">My letters</span></h4>${letters || '<div class="c"><p class="note">Your approved letters appear here.</p></div>'}</div>
+    <div class="card" id="empTasks"><h4><span class="kind">My joining and probation tasks</span></h4>${tasks || '<div class="c"><p class="note">Nothing here yet.</p></div>'}</div>
+    <div class="card" id="empSoon"><h4><span class="kind">Coming soon</span></h4>${["My leave", "My payslips", "My reviews", "Policies"].map(n => `<div class="setting"><div><b style="font-weight:500">${n}</b></div><span class="pill p-mut">Coming soon</span></div>`).join("")}</div>
+    <p class="note">This page shows only your own record. Nothing else about the company is visible from an Employee login.</p></div>`;
+  v.scrollTop = 0;
+}
+async function sendEmpRequest(form) {
+  if (empBusy) return;
+  const f = form.dataset.field, val = $("#empNew").value.trim(), why = $("#empWhy").value.trim();
+  if (!val) { empNote = "Enter the new " + FIELD_LABEL[f].toLowerCase() + "."; return renderEmployee(); }
+  empBusy = true;
+  try { await auth.requestProfileChange(f, val, why); empNote = `Sent to HR: ${FIELD_LABEL[f].toLowerCase()} → “${val}”. It changes once they approve.`; empEdit = null; }
+  catch (e) { if (auth.isSessionExpired(e)) { empBusy = false; return endSession("expired"); } empNote = e.message; }
+  empBusy = false; await refreshEmployee();
+}
+$("#view").addEventListener("submit", e => { if (EMP && e.target.id === "empReqForm") { e.preventDefault(); e.stopImmediatePropagation(); sendEmpRequest(e.target); } }, true);
+$("#view").addEventListener("click", e => {
+  if (!EMP) return; const b = e.target.closest("[data-v]"); if (!b) return;
+  if (b.dataset.v === "empAsk") { empEdit = b.dataset.field; empNote = ""; renderEmployee(); $("#empNew")?.focus(); }
+  if (b.dataset.v === "empCancel") { empEdit = null; renderEmployee(); }
+  e.stopImmediatePropagation();
+}, true);
+
+/* ---------- HR side: Employee logins and change requests (Super admin and HR) ---------- */
+let CREQ = null, EMPS = null, creqNote = "", creqReject = null, creqBusy = false;
+async function refreshCreq() {
+  try { [CREQ, EMPS] = await Promise.all([auth.companyChangeRequests(), auth.companyEmployees()]); }
+  catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); CREQ = []; EMPS = []; creqNote = e.message; }
+  if (currentTab === "settings") renderTab();
+}
+function employeeAdminCard() {
+  if (!staffAdmin() || (auth.LIVE && isSample())) return "";
+  if (CREQ === null) { refreshCreq(); return `<div class="card" id="empAdmin"><h4><span class="kind">Employee logins and change requests</span></h4><div class="c"><p class="note">Loading…</p></div></div>`; }
+  const pend = CREQ.filter(r => r.status === "pending"), done = CREQ.filter(r => r.status !== "pending").slice(0, 5);
+  const reqRow = r => `<div class="setting" data-req="${esc(r.id)}"><div><b style="font-weight:500">${esc(r.person)} · ${esc(r.label)}</b><small>${esc(r.old_value || "Not given")} → ${esc(r.new_value)}${r.reason ? ` · “${esc(r.reason)}”` : ""}</small>
+      ${r.status !== "pending" ? `<small>${r.status === "approved" ? "Approved" : "Not approved"}${r.decided_by ? " by " + esc(r.decided_by) : ""}${r.note ? ` · ${esc(r.note)}` : ""}</small>` : ""}</div>
+    ${r.status !== "pending" ? reqPill(r) : creqReject === r.id
+      ? `<form class="row saform" id="creqRejectForm" data-id="${esc(r.id)}" novalidate><input id="creqNoteIn" maxlength="300" placeholder="Why not? They'll see this" aria-label="Reason for not approving"><button class="btn" type="submit">Don't approve</button><button class="btn" type="button" data-v="creqCancel">Cancel</button></form>`
+      : `<div class="row"><button class="btn primary" type="button" data-v="creqApprove" data-id="${esc(r.id)}">Approve</button><button class="btn" type="button" data-v="creqReject" data-id="${esc(r.id)}">Don't approve</button></div>`}</div>`;
+  const empRow = x => `<div class="setting"><div><b style="font-weight:500">${esc(x.name)}</b><small>${x.login === "yes" ? "Has an Employee login · " + esc(x.login_email) : x.login === "invited" ? "Login given · joins when they first sign in with " + esc(x.login_email) : "No Employee login yet"}</small></div>
+    ${x.login === "no" ? `<form class="row saform" data-empinvite="${esc(x.id)}" novalidate><input type="email" placeholder="Their email" aria-label="Email for ${esc(x.name)}" value="${esc(x.email || "")}"><button class="btn" type="submit">Give login</button></form>` : ""}</div>`;
+  return `<div class="card" id="empAdmin"><h4><span class="kind">Employee logins and change requests</span>${pend.length ? `<span class="pill p-warn">${pend.length} waiting</span>` : ""}</h4>
+    ${pend.map(reqRow).join("") || '<div class="c"><p class="note">No change requests waiting.</p></div>'}${done.map(reqRow).join("")}
+    ${auth.LIVE ? (EMPS || []).map(empRow).join("") || '<div class="c"><p class="note">Employees appear here once they join. Each can get their own login to see their profile.</p></div>' : ""}
+    <div class="c"><p class="note">An Employee login sees only that person's own profile, letters and tasks, never candidates, salaries or other people. No email is sent: they sign in with the email you give.</p></div>
+    ${creqNote ? `<p class="note" role="status" style="padding:0 16px 12px">${esc(creqNote)}</p>` : ""}</div>`;
+}
+async function decideCreq(id, approve, note) {
+  if (creqBusy) return; creqBusy = true; creqNote = "";
+  try { const r = CREQ.find(x => x.id === id); await auth.decideProfileChange(id, approve, note, profile?.name); creqNote = approve ? `Approved: ${r?.person}'s ${String(r?.label || "").toLowerCase()} is updated.` : `Not approved. ${r?.person} sees your note.`; creqReject = null; }
+  catch (e) { if (auth.isSessionExpired(e)) { creqBusy = false; return endSession("expired"); } creqNote = e.message; }
+  creqBusy = false; CREQ = null; refreshCreq();
+}
+$("#view").addEventListener("click", e => {
+  const b = e.target.closest("[data-v]"); if (!b || EMP) return;
+  if (b.dataset.v === "creqApprove") decideCreq(b.dataset.id, true);
+  if (b.dataset.v === "creqReject") { creqReject = b.dataset.id; creqNote = ""; renderTab(); $("#creqNoteIn")?.focus(); }
+  if (b.dataset.v === "creqCancel") { creqReject = null; renderTab(); }
+});
+$("#view").addEventListener("submit", async e => {
+  if (EMP) return;
+  if (e.target.id === "creqRejectForm") { e.preventDefault(); return decideCreq(e.target.dataset.id, false, $("#creqNoteIn").value); }
+  if (e.target.dataset.empinvite) {
+    e.preventDefault(); const em = e.target.querySelector("input").value.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { creqNote = "Enter a valid email address."; return renderTab(); }
+    try { const r = await auth.inviteEmployee(e.target.dataset.empinvite, em); creqNote = r?.pending ? `${r.name} can sign in with ${em} to see their profile.` : `${r?.name} now has an Employee login.`; }
+    catch (x) { if (auth.isSessionExpired(x)) return endSession("expired"); creqNote = x.message; }
+    CREQ = null; refreshCreq();
+  }
+});
+
 function renderTab() {
   const v = $("#view");
   const head = (h, p, act) => `<div class="vhead"><div><h2>${h}</h2><p>${p}</p></div>${act || ""}</div>`;
@@ -1175,10 +1345,10 @@ function renderTab() {
   if (currentTab === "people" && V.personId) {
     html = personDetail(D.people.find(p => p.id === V.personId));
   } else if (currentTab === "today") {
-    const list = D.tasks.filter(t => (V.todayFilter === "All" ? true : t.when === V.todayFilter) && ownerMatch(t.owner));
+    const list = D.tasks.filter(t => taskVisible(t) && (V.todayFilter === "All" ? true : t.when === V.todayFilter) && ownerMatch(t.owner));
     const order = { Late: 0, Today: 1, "This week": 2, Done: 3 };
     list.sort((a, b) => order[a.when] - order[b.when]);
-    html = head("Today", `${D.tasks.filter(t => !t.done).length} open tasks · ${D.tasks.filter(t => !t.done && t.when === "Late").length} late`) +
+    html = head("Today", `${D.tasks.filter(t => !t.done && taskVisible(t)).length} open tasks · ${D.tasks.filter(t => !t.done && taskVisible(t) && t.when === "Late").length} late`) +
       `<div class="toolbar" role="group" aria-label="Filter tasks">${["All", "Late", "Today", "This week", "Done"].map(f => `<button class="fchip" type="button" data-vf="todayFilter" data-val="${f}" aria-pressed="${V.todayFilter === f}">${f}</button>`).join("")}${ownerFilterHtml()}</div>
       <div class="card">${list.length ? list.map(t => `<div class="item"><span class="pill ${whenPill(t.when)}">${esc(t.when)}</span><div class="t">${esc(t.title)}<small>${esc(t.ctx)} · Owner: ${esc(ownerName(t.owner))}</small></div>
         ${t.done ? "" : `<button class="btn${t.when === "Late" ? " primary" : ""}" type="button" data-v="task" data-key="${esc(t.key)}">Do it with Desk</button>`}</div>`).join("") : '<div class="emptyv">Nothing here.</div>'}</div>`;
@@ -1299,7 +1469,7 @@ function personDetail(p) {
 }
 
 function extraView(head) {
-  const open = D.tasks.filter(t => !t.done), late = open.filter(t => t.when === "Late");
+  const open = D.tasks.filter(t => !t.done && taskVisible(t)), late = open.filter(t => t.when === "Late");
   const cands = D.people.filter(p => p.type === "Candidate" && p.stage !== "Closed");
   const stageTot = s => cands.filter(p => p.stage === s).length;
   const ask = (text, label, primary) => `<button class="btn${primary ? " primary" : ""}" type="button" data-v="ask" data-text="${esc(text)}">${esc(label || text)}</button>`;
@@ -1367,6 +1537,9 @@ function extraView(head) {
        ${row("Existing ATS or HRMS", "Import roles and candidates", "Later", "p-mut")}</div>
        <p class="note">Live connections need your approval and a security review. Nothing is connected in this preview.</p>`;
   }
+  if (currentTab === "settings" && !staffAdmin()) {      // Recruiter and Manager: personal settings only (roles spec §2)
+    return head("Settings", "Your own settings") + `${nameCard()}${peopleCard()}${SECURITY_CARD}`;
+  }
   if (currentTab === "settings") {
     return head("Settings", isSample() ? "Acme Fintech · Hyderabad · sample company for this preview" : [WS?.name || profile?.company, WS?.city || profile?.city].filter(Boolean).join(" · ")) +
       `${nameCard()}${isSample() && auth.LIVE === false || (auth.LIVE && WS?.is_sample) ? `<div class="card" id="demoSettings"><h4><span class="kind">Demo</span><span class="pill p-mut">Demo accounts only</span></h4>
@@ -1377,6 +1550,7 @@ function extraView(head) {
         <div class="setting"><div><b style="font-weight:500">Who handles HR and hiring</b><small>${mode === "solo" ? "Just me: what I approve goes out straight away" : "Me and juniors: anything reaching a candidate or employee needs my approval"}</small></div><span class="pill p-mut">${mode === "solo" ? "Solo" : "Lead + juniors"}</span></div>
         <div class="setting"><div><b style="font-weight:500">Separate recruiting and HR teams</b><small>Handoff at offer accepted</small></div><span class="pill p-mut">Coming later</span></div></div>
       ${peopleCard()}
+      ${employeeAdminCard()}
       <div class="card"><h4><span class="kind">Response targets</span><span class="pill p-mut">Automatic reminders: planned</span></h4>
         <div class="setting"><div><b style="font-weight:500">First reply to applicants</b><small>Escalates to the hiring lead when missed</small></div><span class="pill p-mut">24 hours</span></div>
         <div class="setting"><div><b style="font-weight:500">Interview feedback</b><small>Reminder at 4 hours, escalation at 24 hours</small></div><span class="pill p-mut">24 hours</span></div>
@@ -1388,9 +1562,7 @@ function extraView(head) {
           <span class="pill p-mut">Demo access is granted by Clearstage</span></div></div>
       ${sampleAccessCard()}
       ${modulesAdminCard()}
-      <div class="card"><h4><span class="kind">Security</span></h4>
-        <div class="setting"><div><b style="font-weight:500">Session timeout</b><small>Signed out after 30 minutes without activity (warning at 25), and always after 12 hours</small></div><span class="pill p-ok">On</span></div>
-        <div class="setting"><div><b style="font-weight:500">Sign out on all devices</b><small>Ends every session for your account, on every browser and phone</small></div><button class="btn" type="button" data-v="signOutAll">Sign out everywhere</button></div></div>
+      ${SECURITY_CARD}
       <div class="card"><h4><span class="kind">How Desk may act</span></h4>
         <div class="setting"><div><b style="font-weight:500">Drafts only</b><small>Nothing reaches a candidate or employee without a named approval</small></div><span class="pill p-ok">Working in preview</span></div>
         <div class="setting"><div><b style="font-weight:500">Closure reasons</b><small>Fixed job-relevant list; age, gender, marital status, religion, caste and pregnancy are blocked</small></div><span class="pill p-ok">Working in preview</span></div>

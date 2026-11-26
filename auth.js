@@ -118,6 +118,67 @@ export async function setMemberRoles(memberId, roles, seePay, offerApprover) {
 export async function inviteMember(name, email, roles, seePay, offerApprover) {
   return rpc("invite_member", { p_name: name, p_email: email, p_roles: roles, p_see_pay: !!seePay, p_offer_approver: !!offerApprover });
 }
+/* ---------- Public demo: one login per role (founder 26 Nov). Fictional people of the sample company; the code shows
+   on screen as for any demo email. These logins exist only in the signed-out demo, never in the live database. ---------- */
+export const DEMO_ACCOUNTS = {
+  "admin@acme.demo": { name: "Rahul Kapoor", label: "Super admin", roles: ["super_admin"], see_pay: true, offer_approver: true },
+  "hr@acme.demo": { name: "Meena Iyer", label: "HR", roles: ["hr"], see_pay: true, offer_approver: true },
+  "recruiter@acme.demo": { name: "Ritu Sharma", label: "Recruiter", roles: ["recruiter"] },
+  "manager@acme.demo": { name: "Vikram Nair", label: "Manager", roles: ["manager"], offer_approver: true },
+  "employee@acme.demo": { name: "Priya Nair", label: "Employee", employee: true },
+};
+const PROFILE_FIELDS = { phone: "Phone", email: "Personal email", address: "Address", emergency_contact: "Emergency contact" };
+const isoDay = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+function demoEmployee() {
+  const base = { name: "Priya Nair", email: "priya.personal@example.com", phone: "+91 90000 33333", address: "Flat 4B, Sunrise Apartments, Madhapur, Hyderabad",
+    emergency_contact: "Ravi Nair (brother), +91 90000 44444", status: "employee", title: "Customer Success Associate", manager: "Vikram Nair",
+    joined_on: isoDay(-168), probation_ends_on: isoDay(12), login_email: "employee@acme.demo" };
+  const reqs = store.get("demoreq") || [];
+  const profile = { ...base, ...(store.get("demoprofile") || {}) };
+  return { company: "Acme Fintech", profile,
+    letters: [{ kind: "appointment_letter", approved_at: isoDay(-170) + "T10:30:00Z",
+      body: `Dear Priya Nair,\nWe are pleased to appoint you as Customer Success Associate at Acme Fintech Pvt Ltd, Hyderabad.\nProbation: 6 months from your joining date. Your manager reviews your work before it ends, and confirmation is given in writing.\nNotice period: 15 days during probation and 30 days after confirmation.\nFor Acme Fintech Pvt Ltd,\nRahul Kapoor` }],
+    tasks: [{ title: "Probation review with Vikram Nair", kind: "probation_review", status: "open", due_at: isoDay(10) + "T09:00:00Z" },
+      { title: "Joining documents", kind: "joining_documents", status: "done", due_at: isoDay(-168) + "T09:00:00Z" },
+      { title: "Laptop and email", kind: "it_setup", status: "done", due_at: isoDay(-168) + "T09:00:00Z" }],
+    requests: reqs.map(r => ({ ...r })).reverse() };
+}
+function demoRequest(field, value, reason) {
+  const v = String(value || "").trim(), label = PROFILE_FIELDS[field];
+  if (!label) throw new Error("You can ask to change your phone, personal email, address or emergency contact");
+  if (!v) throw new Error("Enter the new value");
+  if (v.length > 300 || String(reason || "").length > 300) throw new Error("Keep it under 300 characters");
+  if (field === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new Error("Enter a valid email address");
+  if (field === "phone" && !/^\+?[0-9 ()-]{7,20}$/.test(v)) throw new Error("Enter the phone number with its country code, like +91 98480 12345");
+  const cur = demoEmployee().profile[field], reqs = store.get("demoreq") || [];
+  if (cur === v) throw new Error(`That's already your ${label.toLowerCase()}`);
+  if (reqs.some(r => r.field === field && r.status === "pending")) throw new Error(`You already have a request for your ${label.toLowerCase()} waiting for HR`);
+  const r = { id: "dr-" + Date.now(), person: "Priya Nair", field, label, old_value: cur, new_value: v, reason: String(reason || "").trim() || null, status: "pending", requested_at: new Date().toISOString() };
+  store.set("demoreq", [...reqs, r]);
+  return r;
+}
+/** 018: the Employee view (own record only) and HR's side of change requests and Employee logins. */
+export async function myEmployee() { return LIVE ? rpc("my_employee") : demoEmployee(); }
+export async function requestProfileChange(field, value, reason) {
+  return LIVE ? rpc("request_profile_change", { p_field: field, p_new_value: value, p_reason: reason || null }) : demoRequest(field, value, reason);
+}
+export async function companyChangeRequests() {
+  if (LIVE) return (await rpc("company_change_requests")) ?? [];
+  return (store.get("demoreq") || []).slice().sort((a, b) => (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || String(b.requested_at).localeCompare(a.requested_at));
+}
+export async function decideProfileChange(id, approve, note, byName) {
+  if (LIVE) return rpc("decide_profile_change", { p_request: id, p_approve: !!approve, p_note: note || null });
+  const reqs = store.get("demoreq") || [], r = reqs.find(x => x.id === id);
+  if (!r) throw new Error("That request isn't in your workspace");
+  if (r.status !== "pending") throw new Error(`That request was already ${r.status}`);
+  if (!approve && !String(note || "").trim()) throw new Error("Add a note saying why, so they know what to do");
+  Object.assign(r, { status: approve ? "approved" : "rejected", decided_at: new Date().toISOString(), note: String(note || "").trim() || null, decided_by: byName || null });
+  if (approve) store.set("demoprofile", { ...(store.get("demoprofile") || {}), [r.field]: r.new_value });
+  store.set("demoreq", reqs);
+  return { id, status: r.status };
+}
+export async function companyEmployees() { return LIVE ? (await rpc("company_employees")) ?? [] : []; }
+export async function inviteEmployee(personId, email) { return rpc("invite_employee", { p_person: personId, p_email: email }); }
 /** QA-011: people can correct their own name. */
 export async function updateMyName(user, name) {
   if (LIVE) return rpc("update_my_name", { p_name: name });
@@ -151,6 +212,9 @@ export async function currentUser() {
  *  so the own company is picked through my_workspaces(), not .maybeSingle() over all memberships. */
 export async function getProfile(user) {
   if (LIVE) return profileFromClient(await client(), user);
+  const d = DEMO_ACCOUNTS[user.email];                   // the public demo's role logins (fictional people of Acme Fintech)
+  if (d) return d.employee ? { name: d.name, employee: demoEmployee(), demoLogin: d.label }
+    : { name: d.name, company: "Acme Fintech", city: "Hyderabad", setup: "solo", roles: d.roles, see_pay: !!d.see_pay, offer_approver: !!d.offer_approver, demoLogin: d.label };
   return store.get("profile:" + user.email) || (memProfile && memProfile.email === user.email ? memProfile : null);
 }
 /** getProfile's live half, with the Supabase client passed in (unit-tested with a fake client). */
@@ -165,7 +229,12 @@ export async function profileFromClient(c, user) {
     const ws = await c.rpc("my_workspaces");
     if (ws.error) throw orExpired(ws.error);
     const own = (Array.isArray(ws.data) ? ws.data : []).find(w => !w.is_sample);
-    if (!own) return null;
+    if (!own) {
+      // 018: an Employee login is never a member; it opens the Employee view with the person's own record only
+      const emp = await c.rpc("my_employee");
+      if (emp.error) throw orExpired(emp.error);
+      return emp.data ? { name: emp.data.profile?.name, employee: emp.data } : null;
+    }
     const { data, error } = await c.from("member").select("full_name, phone, app_role, company:company_id(id, name, city, team_setup, desk_enabled)")
       .eq("user_id", user.id).eq("company_id", own.id).maybeSingle();
     if (error) throw orExpired(error);

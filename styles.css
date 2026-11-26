@@ -384,3 +384,19 @@ fieldset.rolepick { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: 
 fieldset.rolepick legend { font-size: 12px; color: var(--ink-2); padding: 0 0 4px; }
 fieldset.rolepick label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 fieldset.rolepick small { color: var(--ink-2); }
+/* Public demo: one login per role on the sign-in screen */
+.demologins{margin-top:14px;max-width:420px;width:100%}
+.demologins .note{text-align:center;font-size:12px;color:var(--muted);margin:0 0 8px}
+.demochips{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.demochips .btn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;min-height:52px;min-width:0}
+.demochips .btn small{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+/* Menus by role: tiles for screens outside the role */
+.strip a.tile.roleoff{display:none}
+/* Employee view (018): own record only, no menu, no Desk */
+body.emp .sidenav, body.emp .strip, body.emp #composer, body.emp #waToggle, body.emp #wa, body.emp #wsSwitch, body.emp #chatView{display:none !important}
+body.emp #view{display:block}
+.empletter summary{cursor:pointer;display:flex;flex-direction:column;gap:2px;list-style:none}
+.empletter summary::-webkit-details-marker{display:none}
+.empletter[open]{flex-direction:column;align-items:stretch}
+pre.letterbody{white-space:pre-wrap;font:inherit;font-size:14px;line-height:1.55;margin:8px 0 0;padding:12px;background:var(--surface-sunk);border-radius:8px;overflow-wrap:anywhere}
+#empReqForm input, #creqRejectForm input{min-width:0}

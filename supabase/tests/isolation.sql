@@ -30,6 +30,10 @@ do $$ declare a uuid := (select v::uuid from iso where k = 'A'); mid uuid; cid u
   insert into company_module(company_id, module, state) values (a, 'onboard', 'live') on conflict do nothing;
   insert into module_interest(company_id, user_id, module, note) select a, user_id, 'exit', 'ISO-SECRET-A interest' from member where company_id = a limit 1 on conflict do nothing;
   insert into platform_alert(kind, company_id, detail) values ('ai_error', a, '{"note":"ISO-SECRET-A alert"}');
+  -- 018: an Employee login (not yet claimed) and a change request in A
+  insert into employee_account(company_id, person_id, email) select a, id, 'iso-secret-a-employee@test.in' from person where company_id = a order by created_at desc limit 1 on conflict do nothing;
+  insert into employee_change_request(company_id, person_id, field, old_value, new_value, reason)
+    select a, person_id, 'address', null, 'ISO-SECRET-A address', 'ISO-SECRET-A reason' from employee_account where company_id = a limit 1;
 end $$;
 insert into a_secret values ('ISO-SECRET-A');
 
@@ -62,7 +66,8 @@ select 'doc', (select id::text from document where company_id = a.v::uuid limit 
 select 'req', (select id::text from requirement where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
 select 'job', (select id::text from cv_job where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
 select 'event', (select id::text from audit_event where company_id = a.v::uuid order by id limit 1) from iso a where a.k = 'A' union all
-select 'member', (select id::text from member where company_id = a.v::uuid order by created_at desc limit 1) from iso a where a.k = 'A';
+select 'member', (select id::text from member where company_id = a.v::uuid order by created_at desc limit 1) from iso a where a.k = 'A' union all
+select 'ecr', (select id::text from employee_change_request where company_id = a.v::uuid limit 1) from iso a where a.k = 'A';
 do $$ begin if exists (select 1 from iso where v is null) then raise exception 'FAILED: missing A id: %', (select string_agg(k, ',') from iso where v is null); end if; end $$;
 
 -- Fingerprint of all of A's data
@@ -248,7 +253,13 @@ insert into calls values
   ('company_people',                $c$company_people()$c$),
   ('set_member_roles',              $c$set_member_roles('{member}', array['super_admin'], true, true)$c$),
   ('invite_member',                 $c$invite_member('Iso Probe', 'iso-probe@test.in', array['recruiter'], false, false)$c$),
-  ('claim_my_invite',               $c$claim_my_invite()$c$);
+  ('claim_my_invite',               $c$claim_my_invite()$c$),
+  ('my_employee',                   $c$my_employee()$c$),
+  ('request_profile_change',        $c$request_profile_change('address', 'Probe street', null)$c$),
+  ('company_change_requests',       $c$company_change_requests()$c$),
+  ('decide_profile_change',         $c$decide_profile_change('{ecr}', true, null)$c$),
+  ('company_employees',             $c$company_employees()$c$),
+  ('invite_employee',               $c$invite_employee('{person}', 'iso-probe-employee@test.in')$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);

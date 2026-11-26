@@ -6,11 +6,11 @@ import { profileFromClient, isSessionExpired, SessionExpiredError, SESSION_EXPIR
 const own = { id: "co-own", name: "cccc", is_sample: false }, sample = { id: "co-s", name: "Acme Fintech", is_sample: true };
 const row = co => ({ user_id: "u1", company_id: co.id, full_name: "Founder", phone: null, app_role: "owner",
   company: { id: co.id, name: co.name, city: "Hyderabad", team_setup: "solo", desk_enabled: true } });
-function fake({ fresh = true, workspaces = [], members = [], rpcError = null }) {
+function fake({ fresh = true, workspaces = [], members = [], rpcError = null, employee = null }) {
   const log = [];
   return { log,
     rpc: async name => { log.push(name); if (rpcError) return { data: null, error: rpcError };
-      return { data: name === "session_fresh" ? fresh : name === "my_workspaces" ? (fresh ? workspaces : []) : null, error: null }; },
+      return { data: name === "session_fresh" ? fresh : name === "my_workspaces" ? (fresh ? workspaces : []) : name === "my_employee" ? employee : null, error: null }; },
     from: table => { const f = {}; const api = { select: () => api, eq: (k, v) => { f[k] = v; return api; },
       maybeSingle: async () => { log.push({ table, f: { ...f } });
         const rows = fresh ? members.filter(r => Object.entries(f).every(([k, v]) => r[k] === v)) : [];
@@ -46,4 +46,13 @@ test("isSessionExpired recognises every shape; the code-expired wording is separ
   assert.ok(isSessionExpired("Your session has expired. Sign in again."));
   assert.ok(!isSessionExpired(new Error("That code has expired. Send a new one.")));
   assert.ok(!isSessionExpired(null));
+});
+
+test("018: an Employee login (no workspace) opens the Employee view, never setup", async () => {
+  const emp = { company: "cccc", profile: { name: "Kavya Menon" }, letters: [], tasks: [], requests: [] };
+  const c = fake({ workspaces: [], employee: emp });
+  const p = await profileFromClient(c, user);
+  assert.equal(p.name, "Kavya Menon"); assert.deepEqual(p.employee, emp);
+  assert.ok(c.log.indexOf("claim_my_invite") < c.log.indexOf("my_workspaces"), "the invite is claimed first");
+  assert.ok(!c.log.some(x => x.table), "an employee never reads the member table");
 });

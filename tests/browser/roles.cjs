@@ -84,6 +84,38 @@ const { opener } = require('./fake.cjs');
   ok(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'D1. 360 px: no sideways scroll with the role picker open');
   await t.ctx.close();
 
+
+  // ---------- F. Live Employee login: Employee view, own record, request goes to request_profile_change ----------
+  const empData = { company: 'Rycruit (fictional)', company_id: own.id, profile: { name: 'Kavya Menon', email: 'kavya@example.com', phone: '+91 90000 11111', title: 'Backend Developer', manager: 'Vikram Nair', login_email: 'kavya.login@example.com' },
+    letters: [], tasks: [], requests: [] };
+  t = await open({ session: true, uid: 'u-emp', email: 'kavya.login@example.com', signedInAt: Date.now() - 600e3, workspaces: [], members: [], rpcData: { my_employee: empData, request_profile_change: { id: 'r1', status: 'pending' } } }); p = t.p;
+  await p.waitForTimeout(400);
+  v = await text(p, '#view');
+  ok(v.includes('Kavya Menon') && v.includes('only you can see this page') && !(await p.isVisible('.sidenav')), 'F1. an Employee login opens the Employee view, no menu');
+  ok(!(await t.calls()).some(c => c.rpc === 'create_company_for_me') && !(await p.isVisible('#s-setup')), 'F1. never the setup screen');
+  await p.click('[data-v="empAsk"][data-field="address"]'); await p.fill('#empNew', '12 Lake View Road'); await p.fill('#empWhy', 'Moved'); await p.click('#empReqForm button[type="submit"]'); await p.waitForTimeout(500);
+  c = await lastCall(t, 'request_profile_change');
+  ok(c && c.args.p_field === 'address' && c.args.p_new_value === '12 Lake View Road' && c.args.p_reason === 'Moved', 'F2. request_profile_change(address, value, reason)');
+  ok((await text(p, '#view')).includes('Sent to HR'), 'F2. confirmation');
+  ok(!t.errs.length, 'F. no page errors ' + t.errs.join(' | '));
+  await t.ctx.close();
+
+  // ---------- G. Live HR: change requests and Employee logins ----------
+  t = await open(base({ myRoles: { roles: ['hr'], see_pay: true, offer_approver: true }, rpcData: { my_modules: DEF,
+    company_change_requests: [{ id: 'cr1', person: 'Kavya Menon', field: 'address', label: 'Address', old_value: null, new_value: '12 Lake View Road', reason: 'Moved', status: 'pending' }],
+    company_employees: [{ id: 'p-k', name: 'Kavya Menon', email: 'kavya@example.com', login: 'yes', login_email: 'kavya.login@example.com' }, { id: 'p-r', name: 'Rohit Bansal', email: null, login: 'no' }],
+    decide_profile_change: { id: 'cr1', status: 'approved' }, invite_employee: { name: 'Rohit Bansal', pending: true } } })); p = t.p;
+  await go(p, 'settings'); await p.waitForTimeout(400);
+  v = await text(p, '#empAdmin');
+  ok(v.includes('1 waiting') && v.includes('Kavya Menon · Address') && v.includes('Has an Employee login') && v.includes('No Employee login yet'), 'G1. HR sees requests and logins');
+  await p.click('[data-v="creqApprove"][data-id="cr1"]'); await p.waitForTimeout(500);
+  c = await lastCall(t, 'decide_profile_change');
+  ok(c && c.args.p_request === 'cr1' && c.args.p_approve === true, 'G2. decide_profile_change(cr1, approve)');
+  await p.fill('#empAdmin [data-empinvite="p-r"] input', 'rohit.login@example.com'); await p.click('#empAdmin [data-empinvite="p-r"] button'); await p.waitForTimeout(500);
+  c = await lastCall(t, 'invite_employee');
+  ok(c && c.args.p_person === 'p-r' && c.args.p_email === 'rohit.login@example.com', 'G3. invite_employee(Rohit, email)');
+  ok(!t.errs.length, 'G. no page errors ' + t.errs.join(' | '));
+  await t.ctx.close();
   // ---------- E. Public demo: no People card ----------
   {
     const ctx = await b.newContext({ timezoneId: 'Asia/Kolkata' }); const q = await ctx.newPage();

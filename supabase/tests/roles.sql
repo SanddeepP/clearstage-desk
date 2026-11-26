@@ -3,7 +3,8 @@
 -- ("Rycruit") and check the GO-LIVE permissions, which are today's rules read through the app_role mirror. Each probe also
 -- checks that company B ("Other Co") gives zero rows in every company table and that nobody can change their own role.
 -- P-PA (Clearstage platform admin) can manage modules and module interest, but gets nothing of A's candidates,
--- employees or offers. Runs last. All people here are fictional.
+-- employees or offers. P-E (Employee login, 018) reads only their own record and asks for changes HR approves.
+-- Runs last. All people here are fictional.
 \set ON_ERROR_STOP on
 reset role;
 create temp table rp(k text primary key, v text); grant select, insert on rp to authenticated;
@@ -217,7 +218,134 @@ do $$ declare a uuid := (select v::uuid from rp where k = 'A'); out text; begin
   exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-PA changed a client''s roles'; end if; end;
 end $$;
 
+-- ===================== P-E: Employee (018) =====================
+reset role;
+insert into auth.users values ('aaaaaaaa-0000-4000-8000-000000000007', 'kavya.employee@test.in') on conflict do nothing;
+insert into person(company_id, full_name, email, phone, status, joined_on)
+select (select v::uuid from rp where k = 'A'), n, e, ph, 'employee', current_date - 30 from (values
+  ('Kavya Menon', 'kavya.personal@test.in', '+91 90000 11111'), ('Rohit Bansal', 'rohit.personal@test.in', '+91 90000 22222')) x(n, e, ph);
+insert into rp select 'kavya', id::text from person where full_name = 'Kavya Menon';
+insert into rp select 'rohit', id::text from person where full_name = 'Rohit Bansal';
+
+-- HR gives Kavya her Employee login; a Recruiter can't; a staff email can't be an Employee login
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000003';
+do $$ declare r jsonb; begin
+  r := invite_employee((select v::uuid from rp where k = 'kavya'), 'Kavya.Employee@test.in');
+  if (r->>'pending')::boolean then raise exception 'FAILED: an existing account should be linked straight away: %', r; end if;
+  begin perform invite_employee((select v::uuid from rp where k = 'rohit'), 'approver@test.in'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like '%already has a staff login%' then raise exception 'FAILED: staff email as Employee login: %', sqlerrm; end if; end;
+  begin perform invite_employee((select v::uuid from rp where k = 'kavya'), 'kavya2@test.in'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like '%already has an Employee login' then raise exception 'FAILED: second login: %', sqlerrm; end if; end;
+  begin perform invite_employee((select id from person where company_id = (select v::uuid from rp where k = 'A') and status = 'candidate' limit 1), 'cand@test.in'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like 'Only employees get an Employee login%' then raise exception 'FAILED: candidate login: %', sqlerrm; end if; end;
+  if not exists (select 1 from jsonb_array_elements(company_employees()) x where x->>'name' = 'Kavya Menon' and x->>'login' = 'yes') then raise exception 'FAILED: company_employees'; end if;
+end $$;
+reset role; set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000002';
+do $$ begin
+  begin perform invite_employee((select v::uuid from rp where k = 'rohit'), 'rohit.login@test.in'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm <> 'Only HR or a Super admin can give employees a login' then raise exception 'FAILED: recruiter gave a login: %', sqlerrm; end if; end;
+end $$;
+
+-- Kavya signs in: her own record only, nothing of any HR table, in A or B
+reset role; set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000007';
+do $$ declare a uuid := (select v::uuid from rp where k = 'A'); b uuid := (select v::uuid from rp where k = 'B'); t record; n bigint; me jsonb; rk text; r jsonb; begin
+  me := my_employee();
+  if me->'profile'->>'name' <> 'Kavya Menon' or me->>'company_id' <> a::text then raise exception 'FAILED: P-E own profile: %', me; end if;
+  if me::text like '%Rohit Bansal%' or me::text like '%rohit.personal%' then raise exception 'FAILED: P-E sees another employee'; end if;
+  for t in select cl.relname from pg_class cl join pg_namespace s on s.oid = cl.relnamespace
+           where s.nspname = 'public' and cl.relkind = 'r' and exists (select 1 from information_schema.columns c where c.table_schema = 'public' and c.table_name = cl.relname and c.column_name = 'company_id') loop
+    execute format('select count(*) from public.%I where company_id in ($1, $2)', t.relname) into n using a, b;
+    if t.relname = 'employee_account' then
+      if n <> 1 or (select count(*) from employee_account where user_id <> auth.uid()) <> 0 then raise exception 'FAILED: P-E reads % employee_account rows', n; end if;
+    elsif n <> 0 then raise exception 'FAILED: P-E reads % row(s) of %', n, t.relname; end if;
+    begin execute format('update public.%I set company_id = company_id where company_id in ($1, $2)', t.relname) using a, b; get diagnostics n = row_count;
+      if n <> 0 then raise exception 'FAILED: P-E updated % row(s) of %', n, t.relname; end if;
+    exception when insufficient_privilege then null; end;
+  end loop;
+  if (select count(*) from person) <> 0 or (select count(*) from offer) <> 0 or (select count(*) from member) <> 0 then raise exception 'FAILED: P-E reads HR tables'; end if;
+  if current_member() is not null and (current_member()).id is not null then raise exception 'FAILED: P-E is a member'; end if;
+  if is_admin(a) or can_approve(a) or is_platform_admin() then raise exception 'FAILED: P-E has staff rights'; end if;
+  foreach rk in array array['super_admin', 'hr', 'recruiter', 'manager'] loop if has_role(a, rk) then raise exception 'FAILED: P-E holds %', rk; end if; end loop;
+  if jsonb_array_length(coalesce(my_workspaces(), '[]')) <> 0 or company_people() <> '[]' or company_change_requests() <> '[]' or company_employees() <> '[]' or my_roles() is not null then
+    raise exception 'FAILED: P-E gets staff lists'; end if;
+  -- HR functions and Desk tools refuse
+  begin perform set_member_roles((select v::uuid from rp where k = 'ritu'), array['recruiter']); raise exception 'SHOULD HAVE FAILED'; exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-E set roles'; end if; end;
+  begin perform invite_member('Planted Person', 'planted@test.in', array['super_admin']); raise exception 'SHOULD HAVE FAILED'; exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-E invited staff'; end if; end;
+  begin perform invite_employee((select v::uuid from rp where k = 'rohit'), 'x@test.in'); raise exception 'SHOULD HAVE FAILED'; exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-E gave a login'; end if; end;
+  begin perform desk_approve('offer', (select v::uuid from rp where k = 'offer')); raise exception 'SHOULD HAVE FAILED'; exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-E approved an offer'; end if; end;
+  begin perform desk_save_document((select v::uuid from rp where k = 'kavya'), 'appointment_letter', 'x', 'x', null); raise exception 'SHOULD HAVE FAILED'; exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-E saved a document'; end if; end;
+  begin perform create_company_for_me('Kavya Co', 'Hyderabad', 'Kavya Menon', null, 'solo', 'IN', null, 'Asia/Kolkata'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like 'This email has an Employee login%' then raise exception 'FAILED: P-E became staff: %', sqlerrm; end if; end;
+  -- direct writes refused
+  begin insert into employee_change_request(company_id, person_id, field, new_value, status) values (a, (select v::uuid from rp where k = 'kavya'), 'phone', '+91 1', 'approved'); raise exception 'FAILED: P-E wrote a request directly';
+  exception when insufficient_privilege then null; end;
+  update person set phone = '+91 99999 99999' where id = (select v::uuid from rp where k = 'kavya'); get diagnostics n = row_count; if n <> 0 then raise exception 'FAILED: P-E edited her record directly'; end if;
+  -- change requests
+  r := request_profile_change('phone', '+91 98480 12345', 'New number');
+  if r->>'status' <> 'pending' or r->>'old_value' <> '+91 90000 11111' then raise exception 'FAILED: request: %', r; end if;
+  perform request_profile_change('address', '12 Lake View Road, Hyderabad');
+  begin perform request_profile_change('phone', '+91 98480 99999'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like 'You already have a request for your phone%' then raise exception 'FAILED: duplicate request: %', sqlerrm; end if; end;
+  begin perform request_profile_change('email', 'kavya.personal@test.in'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like 'That''s already your%' then raise exception 'FAILED: same value: %', sqlerrm; end if; end;
+  begin perform request_profile_change('salary', '9999999'); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like 'You can ask to change%' then raise exception 'FAILED: salary field: %', sqlerrm; end if; end;
+  begin perform decide_profile_change((r->>'id')::uuid, true); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-E approved her own request'; end if; end;
+  if (select phone from person where id = (select v::uuid from rp where k = 'kavya')) is not null then raise exception 'FAILED: P-E can read person directly'; end if;
+  if my_employee()->'profile'->>'phone' <> '+91 90000 11111' then raise exception 'FAILED: changed before approval'; end if;
+end $$;
+
+-- HR decides: a Recruiter can't; reject needs a note; approve applies the change
+reset role; set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000002';
+do $$ begin
+  begin perform decide_profile_change((select id from employee_change_request where field = 'phone' and status = 'pending' and new_value = '+91 98480 12345'), true); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm <> 'Only HR or a Super admin can approve changes to employee records' then raise exception 'FAILED: recruiter decided: %', sqlerrm; end if; end;
+end $$;
+reset role; set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000003';
+do $$ declare a uuid := (select v::uuid from rp where k = 'A'); q jsonb := company_change_requests(); ph uuid; ad uuid; begin
+  select (x->>'id')::uuid into ph from jsonb_array_elements(q) x where x->>'person' = 'Kavya Menon' and x->>'field' = 'phone' and x->>'status' = 'pending';
+  select (x->>'id')::uuid into ad from jsonb_array_elements(q) x where x->>'person' = 'Kavya Menon' and x->>'field' = 'address' and x->>'status' = 'pending';
+  if ph is null or ad is null then raise exception 'FAILED: HR doesn''t see the requests: %', left(q::text, 300); end if;
+  if (select phone from person where id = (select v::uuid from rp where k = 'kavya')) <> '+91 90000 11111' then raise exception 'FAILED: phone changed before approval'; end if;
+  begin perform decide_profile_change(ad, false, ''); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like 'Add a note%' then raise exception 'FAILED: reject without note: %', sqlerrm; end if; end;
+  perform decide_profile_change(ph, true);
+  perform decide_profile_change(ad, false, 'Please add the PIN code');
+  begin perform decide_profile_change(ph, true); raise exception 'SHOULD HAVE FAILED';
+  exception when others then if sqlerrm not like 'That request was already%' then raise exception 'FAILED: decided twice: %', sqlerrm; end if; end;
+  if (select phone from person where id = (select v::uuid from rp where k = 'kavya')) <> '+91 98480 12345' then raise exception 'FAILED: approval not applied'; end if;
+  if (select address from person where id = (select v::uuid from rp where k = 'kavya')) is not null then raise exception 'FAILED: rejected change applied'; end if;
+  if (select count(*) from audit_event where company_id = a and action in ('profile_change_requested', 'profile_change_approved', 'profile_change_rejected', 'employee_login_given')) < 5 then raise exception 'FAILED: employee changes not audited'; end if;
+end $$;
+reset role; set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000007';
+do $$ declare me jsonb := my_employee(); begin
+  if me->'profile'->>'phone' <> '+91 98480 12345' then raise exception 'FAILED: P-E doesn''t see the approved phone'; end if;
+  if not exists (select 1 from jsonb_array_elements(me->'requests') x where x->>'field' = 'address' and x->>'status' = 'rejected' and x->>'note' = 'Please add the PIN code') then raise exception 'FAILED: P-E doesn''t see the rejection note'; end if;
+end $$;
+
+-- An Employee login given to an email with no account yet is linked at first sign-in
+reset role; set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000003';
+do $$ begin if not (invite_employee((select v::uuid from rp where k = 'rohit'), 'rohit.login@test.in')->>'pending')::boolean then raise exception 'FAILED: pending employee login'; end if; end $$;
+reset role;
+insert into auth.users values ('aaaaaaaa-0000-4000-8000-000000000008', 'rohit.login@test.in') on conflict do nothing;
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000008';
+do $$ begin
+  if my_employee() is not null then raise exception 'FAILED: linked before sign-in'; end if;
+  if claim_my_invite() is distinct from (select v::uuid from rp where k = 'A') then raise exception 'FAILED: employee claim'; end if;
+  if my_employee()->'profile'->>'name' <> 'Rohit Bansal' then raise exception 'FAILED: Rohit''s own record'; end if;
+  if my_employee()::text like '%Kavya%' then raise exception 'FAILED: Rohit sees Kavya'; end if;
+end $$;
+
 reset role;
 drop function public.zz_probe_other_company(uuid, text);
 drop function public.zz_probe_own_role(text);
-select 'ROLE CHECKS PASSED (mapping, P-SA, P-HR, P-R, P-M, invite, P-PA)';
+select 'ROLE CHECKS PASSED (mapping, P-SA, P-HR, P-R, P-M, invite, P-PA, P-E)';
