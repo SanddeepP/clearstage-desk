@@ -65,7 +65,9 @@ Deno.serve(async (req) => {
   const action = body.action ?? "chat";
 
   try {
-    if (action !== "chat") return json(req, await handleAction({ action, params: body.params, rpc }));
+    // QA-044: what the asking user may use, by module (Desk checks every tool against it, as the user)
+    const access = await rpc("my_access_modules");
+    if (action !== "chat") return json(req, await handleAction({ action, params: body.params, rpc, access }));
 
     // C2: the live agent is allow-listed per company until pilots (switched on by Clearstage, not by users).
     const ctx = await rpc("desk_ai_context");
@@ -106,7 +108,7 @@ Deno.serve(async (req) => {
     let out;
     try {
     out = await runTurn({ text, history, deps: {
-      llm, rpc, models: MODELS, tokenCap: TOKEN_CAP,
+      llm, rpc, models: MODELS, tokenCap: TOKEN_CAP, access, channels: Array.isArray(ctx.channels) ? ctx.channels : ["app", "email"],
       monthTokens: () => rpc("desk_month_tokens"),
       logUsage: async ({ model, purpose, tools, usage }: { model: string; purpose: string; tools: string[]; usage?: { input_tokens?: number; output_tokens?: number } }) => {
         await sb.from("ai_usage").insert({ company_id: me.company_id, conversation_id: convId, model, purpose, tools, key_tier: pick.tier,

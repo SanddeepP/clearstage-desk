@@ -80,9 +80,14 @@ module.exports.opener = (b, BASE, { width = 1280, height = 900 } = {}) => async 
   await p.addInitScript(([f, st]) => { window.__fake = f; try { for (const [k, v] of Object.entries(st)) localStorage.setItem(k, v); } catch {} }, [fake, storage]);
   await p.route('**/supabase.min.js', r => r.fulfill({ contentType: 'text/javascript', body: module.exports.FAKE }));
   await p.route('**/config.js', r => r.fulfill({ contentType: 'text/javascript', body: 'export const SUPABASE_URL="https://fake.supabase.test", SUPABASE_ANON_KEY="sb_publishable_test", EMAIL_HAS_CODE=true;' }));
-  await p.route('https://fake.supabase.test/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fake.deskReply || { error: 'unexpected' }) }));
+  const deskCalls = [];
+  await p.route('https://fake.supabase.test/**', r => {
+    let req = null; try { req = JSON.parse(r.request().postData() || 'null'); } catch {} deskCalls.push(req);
+    const reply = (req && fake.deskReplies && fake.deskReplies[req.action]) || fake.deskReply || { error: 'unexpected' };
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reply) });
+  });
   await p.goto(BASE); await p.waitForTimeout(1500);
   const vis = async id => !(await p.isHidden('#' + id));
   const calls = () => p.evaluate(() => window.__fake.calls);
-  return { p, ctx, errs, vis, calls };
+  return { p, ctx, errs, vis, calls, deskCalls };
 };

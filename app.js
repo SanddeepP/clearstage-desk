@@ -89,7 +89,11 @@ $("#codeForm").addEventListener("submit", async e => {
  *  12 hours or idle for 30 minutes (bug 25 Nov: an expired session used to land on "Set up your workspace"). */
 let resuming = false, verifying = false;
 /** A new sign-in starts the clocks again: the previous session's activity and sign-in times must not judge it. */
-function markFreshSession() { try { const t = String(Date.now()); localStorage.setItem(SESSION_KEYS.act, t); localStorage.setItem(SESSION_KEYS.start, t); } catch { /* blocked */ } }
+function markFreshSession() {
+  try { const t = String(Date.now()); localStorage.setItem(SESSION_KEYS.act, t); localStorage.setItem(SESSION_KEYS.start, t); } catch { /* blocked */ }
+  // QA-046: a fresh sign-in opens your own company, never the workspace used before it
+  try { Object.keys(sessionStorage).filter(k => k.startsWith("cs:ws:")).forEach(k => sessionStorage.removeItem(k)); } catch { /* blocked */ }
+}
 async function resume(u) {
   if (resuming) return; resuming = true;
   try {
@@ -279,7 +283,7 @@ async function openApp() {
 }
 function init(m) {
   if (m) mode = m;
-  D = isSample() ? seed() : emptyData();
+  D = isSample() ? scopeToRole(seed()) : emptyData();
   SCR ??= createScreening({ openPerson, offerUndo, company: () => "Acme Fintech", D: () => D, desk, say, me, chips, later, paint, renderTab, tab: () => currentTab, esc, first, fmtIST, id, logApproval, ink });
   SCR.reset();
   inner.innerHTML = ""; ph.innerHTML = '<div class="empty">Messages Desk sends appear here.</div>';
@@ -338,8 +342,9 @@ let SCR;   // screening demo, created once the helpers below exist
 function openPerson(pid) { V.personId = /^\d+$/.test(String(pid)) ? Number(pid) : pid; if (currentTab !== "people") location.hash = "people"; else renderTab(); }
 function defaults() {
   if (!isSample()) return chips([["What's on today?", () => route("What's on today?")], ["Show my open roles", () => route("Show my open roles")], ["Create a role", () => route("Create a new role")]]);
-  chips([["What's on today?", brief], ["Screen CVs for Backend Developer", () => route("Screen CVs for Backend Developer")], ["Chase Arjun", () => route("Chase Arjun")], ["Draft Sneha's letter", letter], ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
-    ["Close candidates who failed the test", bulk], ["Start Priya's probation review", probation], ["Wrap up my day", wrap]]);
+  chips([["What's on today?", brief], ["Screen CVs for Backend Developer", () => route("Screen CVs for Backend Developer")], ["Chase Arjun", () => route("Chase Arjun")],
+    ...(canSee("onboard") ? [["Draft Sneha's letter", letter]] : []), ["Show my pipeline", pipeline], ["Ek data analyst chahiye Bangalore mein, 8-10L", () => hireFrom("Ek data analyst chahiye Bangalore mein, 8-10L")],
+    ["Close candidates who failed the test", bulk], ...(canSee("probation") ? [["Start Priya's probation review", probation]] : []), ["Wrap up my day", wrap]]);
 }
 
 // Pencil & Ink: AI output is a draft until a named person approves it. Every approval is logged.
@@ -572,7 +577,8 @@ async function loadWorkspaces() {
   try { MYROLES = await auth.myRoles(); } catch { MYROLES = null; }
   try { WS_LIST = await auth.workspaces(); } catch { WS_LIST = []; }
   const own = WS_LIST.find(w => !w.is_sample), sample = WS_LIST.find(w => w.is_sample);
-  let pick = null; try { pick = localStorage.getItem("cs:ws:" + (user?.id || "")); } catch { /* blocked */ }
+  // QA-046: after a fresh sign-in, open your own company. The last-used workspace is restored only within the same session.
+  let pick = null; try { pick = sessionStorage.getItem("cs:ws:" + (user?.id || "")); localStorage.removeItem("cs:ws:" + (user?.id || "")); } catch { /* blocked */ }
   WS = WS_LIST.find(w => w.id === pick) || own || sample || { id: null, name: profile?.company || "Your company", is_sample: false };
   const sw = $("#wsSwitch");
   sw.hidden = !(own && sample);
@@ -580,7 +586,7 @@ async function loadWorkspaces() {
 }
 $("#wsSwitch").addEventListener("change", e => {
   WS = WS_LIST.find(w => w.id === e.target.value) || WS;
-  try { localStorage.setItem("cs:ws:" + (user?.id || ""), WS.id); } catch { /* blocked */ }
+  try { sessionStorage.setItem("cs:ws:" + (user?.id || ""), WS.id); } catch { /* blocked */ }
   applyWorkspace(); init(); showTab();
 });
 function applyWorkspace() {
@@ -622,6 +628,7 @@ Thank you for your work during probation. We look forward to the year ahead.
 ${SIGN}`;
 
 function letter() {
+  if (!canSee("onboard")) return later(() => say(esc(outsideRole("onboard"))));   // QA-044: every entry point, not only typed words
   if (D.done.letter) return say("Sneha's letter is already handled.");
   D.done.letter = 1;
   later(() => desk(`<div class="bubble">Here's Sneha's appointment letter, filled from her accepted offer.</div>
@@ -633,6 +640,7 @@ function letter() {
 ACT.noop = () => say("Editing drafts isn't in this preview yet. In the full product this opens the draft for editing.");
 // QA-021: a fixed list of reasons, the same protected-word block as closures, stored with the audit event
 const DRAFT_REJECT_REASONS = ["Wrong details (date, amount or name)", "Wrong tone or wording", "Not needed any more", "Needs a policy or legal check", "Duplicate of another draft"];
+const DRAFT_REASON_KEYS = ["wrong_details", "wrong_tone", "not_needed", "needs_check", "duplicate"];   // same order; the server keeps the list (020)
 ACT.rejectDraft = b => {
   const card = b.closest(".card"); if (card.querySelector("[data-rr]")) return;
   const what = card.querySelector("h4")?.textContent.replace(/^(Desk drafted|Approval)\s*/, "").replace(/\s*(Waiting for.*|Draft|Check (passed|failed))$/, "").trim() || "draft";
@@ -651,6 +659,7 @@ ACT.sendLetter = b => approve(b, "Sneha's appointment letter", () => {
   say(`Sneha gets it for e-acknowledgement. ${PREVIEW_SENT} Her joiner checklist is on track for ${T.weekday(5)}.`);
 });
 function remindIT() {
+  if (!canSee("onboard")) return later(() => say(esc(outsideRole("onboard"))));   // QA-044: every entry point, not only typed words
   const kiran = !task("laptop") || task("laptop").done ? true : false;
   const who = task("laptop") && !task("laptop").done ? "Sneha" : "Kiran";
   say(`Suresh (IT) gets a WhatsApp reminder for ${who}'s laptop and email. ${PREVIEW_SENT}`);
@@ -764,6 +773,7 @@ ACT.sendOffer = b => approve(b, "Kiran's offer letter", () => {
 });
 
 function accepted() {
+  if (!canSee("onboard")) return later(() => say(esc(outsideRole("onboard"))));   // QA-044: every entry point, not only typed words
   if (!D.done.offerSent) return say("Kiran doesn't have an offer yet. Want me to build it?") && chips([["Build Kiran's offer", offer]]);
   if (D.done.accepted) return say("Kiran's onboarding has already started. See Joiners & probation.");
   D.done.accepted = 1;
@@ -789,6 +799,7 @@ function accepted() {
 }
 ACT.kiranLetter = () => { me("Draft Kiran's appointment letter"); kiranLetter(); };
 function kiranLetter() {
+  if (!canSee("onboard")) return later(() => say(esc(outsideRole("onboard"))));   // QA-044: every entry point, not only typed words
   if (D.done.kiranLetter) return say("Kiran's letter is already drafted.");
   D.done.kiranLetter = 1;
   later(() => desk(`<div class="card draft"><h4><span class="kind">Desk drafted</span>Appointment letter · Kiran S. <span class="pill p-acc">Draft</span></h4><div class="c">
@@ -813,6 +824,7 @@ ACT.sendBulk = b => approve(b, "4 closure notes", () => {
 });
 
 function probation() {
+  if (!canSee("probation")) return later(() => say(esc(outsideRole("probation"))));   // QA-044: every entry point, not only typed words
   if (D.done.prob) return say("Priya's review is already with Vikram.");
   D.done.prob = 1; const pr = person("Priya Nair"); pr.probation.status = "With Vikram"; pr.where = `Review with Vikram, due ${T.day(3)}`;
   const t = task("probation"); t.title = "Vikram to review Priya's probation"; t.owner = "Vikram"; t.ctx = `3-question review on WhatsApp · due ${T.day(3)}`; paint();
@@ -840,7 +852,9 @@ function wrap() {
 function blocked(s) { return /\b(age|old|young|gender|female|male|woman|women|man|married|marital|single|pregnan\w*|religio\w*|hindu|muslim|christian|caste|kids?|children)\b/i.test(s); }
 function honest() {
   later(() => {
-    say(`I can't do that yet in this preview. Right now I can: show today's work, chase late feedback, create a new role, show a pipeline, build Kiran's offer, send closure notes, draft Sneha's letter and start Priya's probation review. The full Desk agent will understand much more.`);
+    const can = ["show today's work", "chase late feedback", "create a new role", "show a pipeline", "build Kiran's offer", "send closure notes",
+      ...(canSee("onboard") ? ["draft Sneha's letter"] : []), ...(canSee("probation") ? ["start Priya's probation review"] : [])];
+    say(`I can't do that yet in this preview. Right now I can: ${can.slice(0, -1).join(", ")} and ${can[can.length - 1]}. The full Desk agent will understand much more.`);
     defaults();
   });
 }
@@ -866,10 +880,20 @@ function renderLiveCard(c) {
 }
 function showLive(out) {
   const d = desk(`${out.reply ? `<div class="bubble">${esc(out.reply)}</div>` : ""}${(out.cards || []).map(renderLiveCard).join("")}`);
-  d.querySelectorAll("[data-live]").forEach(b => b.onclick = async () => {
-    const card = b.closest(".card"); card?.querySelectorAll("button").forEach(x => x.disabled = true);
-    const req = JSON.parse(b.dataset.live);
+  const run = async (req, card) => {
+    card?.querySelectorAll("button").forEach(x => x.disabled = true);
     try { const out = await auth.callDesk(req); if (req.action === "approve" && out.approved_by) ink(card, out.approved_by, out.approved_at || Date.now()); showLive(out); } catch (e) { if (auth.isSessionExpired(e)) return endSession("expired"); say(esc(e.message)); card?.querySelectorAll("button").forEach(x => x.disabled = false); }
+  };
+  d.querySelectorAll("[data-live]").forEach(b => b.onclick = () => {
+    const card = b.closest(".card"), req = JSON.parse(b.dataset.live);
+    // QA-040: Reject asks for a reason from the fixed list, then discards the draft
+    if (req.action === "discard" && !req.params?.reason) {
+      if (card.querySelector("[data-rr]")) return;
+      card.querySelector(".c")?.insertAdjacentHTML("beforeend", `<div class="row" data-rr><span class="note">Why send it back?</span>${DRAFT_REASON_KEYS.map((k, i) => `<button class="fchip" type="button" data-reason="${k}">${esc(DRAFT_REJECT_REASONS[i])}</button>`).join("")}</div>`);
+      card.querySelectorAll("[data-reason]").forEach(x => x.onclick = () => run({ ...req, params: { ...req.params, reason: x.dataset.reason } }, card));
+      return;
+    }
+    run(req, card);
   });
   d.querySelectorAll("[data-say]").forEach(b => b.onclick = () => { me(b.dataset.say); liveTurn(b.dataset.say); });
 }
@@ -898,24 +922,23 @@ function route(t) {
     say("Do you mean Arjun Mehta (interviewer) or Arjun Rao (candidate, Customer Success Associate)?");
     return chips([["Arjun Mehta", chase], ["Arjun Rao", () => openCandidateNoEcho("Arjun Rao")]]);
   }
-  const about = s.match(/^(?:tell me about|who is|show)\s+(.+)$/);
-  if (about) { const p = D.people.find(x => x.name.toLowerCase() === about[1].trim().replace(/[?.]$/, "")); if (p) return openCandidateNoEcho(p.name); }
+  if (mods.isQuestion(t)) return answerQuestion(t);     // QA-045: questions never run actions
   if (/\bconfirm(ation)?\b/.test(s) && /\b(arjun rao|screen call)\b/.test(s)) return confirmScreen();
   if (/\baction plan\b/.test(s)) return later(() => { say(`Here's a plan to get feedback on time above 90%:<br>1. Nudge interviewers 4 hours after each interview, on WhatsApp.<br>2. Escalate to the hiring manager at 24 hours.<br>3. Add a second Engineering interviewer to share the load.<br>4. Review feedback times every Monday in the brief.`); chips([["Chase Arjun Mehta", chase], ["What's on today?", brief]]); });
   if (/\b(monthly|month)\b.*\b(summary|report)\b/.test(s)) { say("Monthly summaries come with the full Desk agent. Here's today's summary for now."); return wrap(); }
   const hire = parseHire(t);
   if (hire) { draftRole = { title: hire.title, count: hire.count, countStated: hire.countStated, city: hire.city, budget: hire.budget, exp: hire.exp, start: hire.start }; return later(askRoleGaps); }
   if (/\bchase\b|\bfeedback\b|\barjun mehta\b/.test(s)) return chase();
-  if (/\bsneha\b|\bappointment letter\b/.test(s)) return letter();
+  if (/\bsneha\b|\bappointment letter\b/.test(s)) return guarded("letter", letter);
   if (/\bpipeline\b|\bboard\b/.test(s)) return pipeline();
   if (/\breject\b.*\b(failed|test|assessment)\b|\bfailed the test\b/.test(s)) return bulk();
   if (/\bfaisal\b/.test(s)) return faisalOffer();
-  if (/\bkiran\b.*\baccept/.test(s)) return accepted();
+  if (/\bkiran\b.*\baccept/.test(s)) return guarded("accepted", accepted);
   if (/\bkiran\b|\boffer\b|\bctc\b/.test(s)) return offer();
-  if (/\bprobation\b|\bpriya\b/.test(s)) return probation();
+  if (/\bprobation\b|\bpriya\b/.test(s)) return guarded("probation", probation);
   if (/\bwrap\b|\bend of (the )?day\b|\baaj kya hua\b/.test(s)) return wrap();
   if (/\btoday\b|\bbrief\b|\bmorning\b|\bkya hai\b|\bwhat'?s on\b/.test(s)) return brief();
-  if (/\b(laptop|suresh)\b/.test(s)) return remindIT();
+  if (/\b(laptop|suresh)\b/.test(s)) return guarded("remindIT", remindIT);
   return honest();
 }
 function confirmScreen() {
@@ -1198,6 +1221,34 @@ function myRoleKeys() {
 // Today shows each role its own items: joiner and probation tasks belong to Onboard and Probation (roles spec §2)
 const TASK_MODULE = { letter: "onboard", laptop: "onboard", kiranLetter: "onboard", probation: "probation" };
 const taskVisible = t => canSee(TASK_MODULE[t.key] || "hiring");
+/* QA-044 (S1): the demo holds only what the signed-in role may see, as the database does for real companies (019).
+   A Recruiter's demo has no joiners or employees, and no onboarding or probation work, so no screen, list or Desk
+   wording can show them. */
+const personVisible = p => p.type === "Candidate" || (p.type === "Joiner" ? canSee("onboard") : canSee("probation") || canSee("onboard"));
+function scopeToRole(d) { d.people = d.people.filter(personVisible); d.tasks = d.tasks.filter(taskVisible); return d; }
+/* Each scripted Desk action declares its module (like the live Desk tools) and is checked before it runs. */
+const SCRIPT_MODULE = { letter: "onboard", accepted: "onboard", remindIT: "onboard", probation: "probation" };
+const outsideRole = mod => `${mods.MODULES[mod].name} isn't part of your access as ${roleText()}. Ask HR or your Super admin if you need it.`;
+const guarded = (key, fn) => canSee(SCRIPT_MODULE[key]) ? fn() : later(() => say(esc(outsideRole(SCRIPT_MODULE[key]))));
+/* QA-045: a question gets an answer from what Desk can look up. It never starts an action. */
+function findVisiblePerson(s) {
+  const full = D.people.find(p => s.includes(p.name.toLowerCase().replace(/\.$/, "")));
+  if (full) return full;
+  const hits = D.people.filter(p => new RegExp(`\\b${p.name.split(" ")[0].toLowerCase()}\\b`).test(s));
+  return hits.length === 1 ? hits[0] : null;
+}
+const personSummary = p => p.type === "Candidate"
+  ? `<b>${esc(p.name)}</b> · ${esc(roleOf(p.role)?.title || "")} · ${esc(p.stage)}: ${esc(p.where)}. Owner: ${esc(ownerName(p.owner))}.`
+  : `<b>${esc(p.name)}</b> · ${esc(p.type)} · ${esc(p.roleTitle || "")}: ${esc(p.where)}.`;
+function answerQuestion(t) {
+  const s = t.toLowerCase();
+  if (/\bwrap\b|\bend of (the )?day\b|\baaj kya hua\b/.test(s)) return wrap();
+  if (/\btoday\b|\bbrief\b|\bmorning\b|\baaj\b|\bwhat'?s on\b/.test(s) && !findVisiblePerson(s)) return brief();
+  if (/\bpipeline\b|\bboard\b/.test(s)) return pipeline();
+  const p = findVisiblePerson(s);
+  if (p) return later(() => say(personSummary(p) + (/\b(phone|number|mobile|email|address|contact)\b/.test(s) ? " Contact details aren't in this preview." : "")));
+  return later(() => say("I can't answer that yet in this preview. I haven't changed anything."));
+}
 const roleText = () => myRoleKeys().map(r => auth.ROLE_LABELS[r] || r).join(" + ");
 const canSee = tab => myRoleKeys().some(r => (STAFF_TABS[r] || []).includes(tab));
 const staffAdmin = () => myRoleKeys().some(r => r === "super_admin" || r === "hr");
@@ -1382,7 +1433,7 @@ function renderTab() {
     const cc = counts();
     html = head("Candidates & people", `${plural(cc.activeCands.length, "active candidate")} · ${cc.people} people in total · needs action first`) +
       `<div class="toolbar"><label class="sr" for="pq">Search people</label><input type="search" id="pq" data-vf="q" placeholder="Search by name, role or status" value="${esc(V.q)}">
-       <label class="sr" for="ptype">Type</label><select id="ptype" data-vf="type">${["All", "Candidate", "Joiner", "Employee"].map(o => `<option${V.type === o ? " selected" : ""}>${o}</option>`).join("")}</select>${ownerFilterHtml()}${SCR.hasData() ? SCR.starFilterHtml() : ""}</div>
+       <label class="sr" for="ptype">Type</label><select id="ptype" data-vf="type">${["All", "Candidate", ...(canSee("onboard") ? ["Joiner"] : []), ...(canSee("onboard") || canSee("probation") ? ["Employee"] : [])].map(o => `<option${V.type === o ? " selected" : ""}>${o}</option>`).join("")}</select>${ownerFilterHtml()}${SCR.hasData() ? SCR.starFilterHtml() : ""}</div>
       <div class="card"><div class="tablewrap"><table><tr><th>Name</th>${SCR.hasData() ? "<th>Stars</th>" : ""}<th>Type</th><th>Role</th><th>Where they are</th><th>Owner</th></tr>
       ${list.map(p => `<tr class="click" data-v="person" data-pid="${p.id}" tabindex="0"><td style="font-weight:500">${esc(p.name)}</td>${SCR.hasData() ? `<td style="text-align:left">${SCR.starsCell(p)}</td>` : ""}<td>${esc(p.type)}</td><td>${esc(roleOf(p.role)?.title || p.roleTitle || "")}</td><td><span class="pill ${wherePill(p)}">${esc(p.stage && p.type === "Candidate" ? p.stage + " · " : "")}${esc(p.where)}</span></td><td style="text-align:left">${esc(ownerName(p.owner))}</td></tr>`).join("") || '<tr><td colspan="5" class="emptyv">No one matches that search.</td></tr>'}
       </table></div></div><p class="note">${list.length} of ${D.people.length} people · sample data</p>`;
@@ -1530,7 +1581,8 @@ function extraView(head) {
   if (currentTab === "integrations") {
     const row = (n, d, state, pill) => `<div class="setting"><div><b style="font-weight:500">${n}</b><small>${d}</small></div><span class="pill ${pill}">${state}</span></div>`;
     return head("Integrations", "Connect the tools your team already uses") +
-      `<div class="card">${row("Email sign-in codes", "Supabase sends the 6-digit code to your inbox", "Setup needed", "p-warn")}
+      `<div class="card">${auth.LIVE ? row("Email sign-in codes", "Resend sends the 6-digit code from login@mail.crovantapartner.com", "Live", "p-ok")
+        : row("Email sign-in codes", "In this demo the code shows on screen; the live app sends it by email", "Demo", "p-mut")}
        ${row("WhatsApp", "Approvals to " + esc(profile?.phone || "your number") + ", nudges to managers and IT", "Sandbox not connected", "p-warn")}
        ${row("Gmail", "Send approved letters and offers from your address", "Not connected", "p-mut")}
        ${row("Google Calendar", "Panel availability and interview invites", "Not connected", "p-mut")}

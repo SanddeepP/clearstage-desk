@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runTurn, handleAction } from "../supabase/functions/_shared/agent.js";
-import { TOOL_DEFS, blockedText } from "../supabase/functions/_shared/tools.js";
+import { TOOL_DEFS, blockedText, TOOL_MODULE, CONFIRM_TOOLS, READ_ONLY_TOOLS, toolDefs } from "../supabase/functions/_shared/tools.js";
+import { systemPrompt } from "../supabase/functions/_shared/agent.js";
+import { isQuestion } from "../lib/modules.js";
 import { ctcBreakup, fixBasic } from "../lib/ctc.js";
 
 // A scripted model: returns the queued responses in order and records what it was asked.
@@ -116,11 +118,11 @@ test("bulk reject: protected trait in the note is refused before reaching the en
 });
 
 test("engine errors go back to the model as tool errors, not crashes", async () => {
-  const { llm, calls } = scriptedLLM([toolUse("chase_owner", { task_id: "t9" }), say("That task is already closed.")]);
-  const eng = fakeEngine({ desk_chase_owner: new Error("ERROR:  That task is not open") });
-  const out = await runTurn({ text: "chase", deps: deps(llm, eng.rpc) });
+  const { llm, calls } = scriptedLLM([toolUse("show_pipeline", { role: "Ghost" }), say("That role is already closed.")]);
+  const eng = fakeEngine({ desk_show_pipeline: new Error("ERROR:  That role is not open") });
+  const out = await runTurn({ text: "pipeline for Ghost", deps: deps(llm, eng.rpc) });
   const toolResult = calls[1].body.messages[2].content[0];
-  assert.equal(toolResult.is_error, true); assert.equal(toolResult.content, "That task is not open");
+  assert.equal(toolResult.is_error, true); assert.equal(toolResult.content, "That role is not open");
   assert.match(out.reply, /closed/);
 });
 
@@ -171,4 +173,90 @@ test("C5: no database check, no card", async () => {
   const { llm } = scriptedLLM([toolUse("calculate_ctc", { application_id: "a1", ctc: 1200000 }), say("Couldn't save.")]);
   const out = await runTurn({ text: "offer", deps: deps(llm, fakeEngine({ desk_save_offer: { offer_id: "o9" } }).rpc) });
   assert.equal(out.cards.length, 0);
+});
+
+// ---------- QA-044 (S1): Desk checks the role by tool, before the tool runs ----------
+const RECRUITER = { roles: ["recruiter"], modules: ["hire", "policies"] };
+test("every Desk tool declares its module", () => {
+  for (const t of TOOL_DEFS) assert.ok(TOOL_MODULE[t.name], `${t.name} has no module`);
+});
+test("a Recruiter isn't even offered Onboard or Probation tools", () => {
+  const names = toolDefs({ modules: RECRUITER.modules }).map(t => t.name);
+  for (const n of ["show_joiners", "mark_offer_accepted", "start_probation_review"]) assert.ok(!names.includes(n), n);
+  for (const n of ["show_pipeline", "calculate_ctc", "get_brief", "find_people"]) assert.ok(names.includes(n), n);
+});
+for (const [tool, input, mod] of [["show_joiners", {}, "Onboard"], ["start_probation_review", { person_id: "p-priya" }, "Probation"],
+  ["draft_document", { person_id: "p-sneha", kind: "appointment_letter", details: "Sneha" }, "Onboard"], ["mark_offer_accepted", { offer_id: "o1" }, "Onboard"]]) {
+  test(`QA-044: a Recruiter's ${tool} is refused before anything is read`, async () => {
+    const { llm } = scriptedLLM([toolUse(tool, input), say("should not get here")]);
+    const eng = fakeEngine();
+    const out = await runTurn({ text: "do it", deps: deps(llm, eng.rpc, { access: RECRUITER }) });
+    assert.equal(out.reply, `${mod} isn't part of your access as Recruiter. Ask HR or your Super admin if you need it.`);
+    assert.ok(!eng.calls.some(c => c.name !== "desk_month_tokens"), "no engine call: " + eng.calls.map(c => c.name));
+  });
+}
+test("QA-044: an offer letter is Hire, so a Recruiter can draft one", async () => {
+  const { llm } = scriptedLLM([toolUse("draft_document", { person_id: "p1", kind: "offer_letter", details: "Kiran" }),
+    { stop_reason: "end_turn", usage: {}, content: [{ type: "text", text: "Dear Kiran" }] }, say("Drafted.")]);
+  const eng = fakeEngine({ desk_save_document: { document_id: "d1" } });
+  const out = await runTurn({ text: "Draft Kiran's offer letter", deps: deps(llm, eng.rpc, { access: RECRUITER }) });
+  assert.equal(out.cards[0].subject_type, "document");
+});
+test("QA-044: a tapped card is checked again (a Recruiter can't run Onboard from a card)", async () => {
+  const eng = fakeEngine();
+  const r = await handleAction({ action: "run", params: { tool: "mark_offer_accepted", input: { offer_id: "o1" } }, rpc: eng.rpc, access: RECRUITER });
+  assert.match(r.reply, /^Onboard isn't part of your access as Recruiter/); assert.equal(eng.calls.length, 0);
+});
+
+// ---------- QA-045 (S2): a question never runs an action; actions come back as cards ----------
+const EVAL = JSON.parse(readFileSync(new URL("./fixtures/desk-eval.json", import.meta.url)));
+for (const c of EVAL.questions) test(`QA-045 eval: "${c.text}" is a question`, () => assert.equal(isQuestion(c.text), true));
+for (const c of EVAL.requests) test(`QA-045 eval: "${c.text}" is a request`, () => assert.equal(isQuestion(c.text), false));
+for (const c of EVAL.questions) test(`QA-045: "${c.text}" offers only read-only tools, and an action the model picks anyway doesn't run`, async () => {
+  const { llm, calls } = scriptedLLM([toolUse("start_probation_review", { person_id: "p-priya" }), say("should not get here")]);
+  const eng = fakeEngine();
+  const out = await runTurn({ text: c.text, deps: deps(llm, eng.rpc) });
+  assert.deepEqual(calls[0].body.tools.map(t => t.name).sort(), [...READ_ONLY_TOOLS].sort());
+  assert.match(calls[0].body.system, /asked a question/);
+  assert.equal(out.blocked, "question"); assert.ok(!eng.calls.some(x => x.name === "desk_start_probation_review"));
+});
+for (const tool of CONFIRM_TOOLS) test(`QA-045: ${tool} returns a card to approve and changes nothing`, async () => {
+  const input = { add_candidate: { name: "Asha Rao", role_id: "r1", consent_confirmed: true }, move_candidate: { application_id: "a1", stage: "Interview" },
+    chase_owner: { task_id: "t1" }, record_feedback: { application_id: "a1", scores: { skills: 4 }, recommendation: "hire" },
+    mark_offer_accepted: { offer_id: "o1" }, start_probation_review: { person_id: "p1" } }[tool];
+  const { llm } = scriptedLLM([toolUse(tool, input), say("Ready for your approval.")]);
+  const eng = fakeEngine();
+  const out = await runTurn({ text: "go ahead", deps: deps(llm, eng.rpc) });
+  assert.equal(out.cards[0].type, "approval"); assert.equal(out.cards[0].actions[0].action, "run");
+  assert.ok(!eng.calls.some(x => x.name !== "desk_month_tokens"), "nothing ran: " + eng.calls.map(x => x.name));
+});
+test("QA-045: Approve on the card runs it; Cancel changes nothing", async () => {
+  const eng = fakeEngine();
+  const r = await handleAction({ action: "run", params: { tool: "chase_owner", input: { task_id: "task-1" } }, rpc: eng.rpc });
+  assert.match(r.reply, /Reminder sent to Arjun Mehta/); assert.deepEqual(eng.calls.map(c => c.name), ["desk_chase_owner"]);
+  const c = await handleAction({ action: "cancel", params: { tool: "chase_owner" }, rpc: eng.rpc });
+  assert.match(c.reply, /Nothing was changed or sent/); assert.equal(eng.calls.length, 1);
+  await assert.rejects(handleAction({ action: "run", params: { tool: "desk_approve", input: {} }, rpc: eng.rpc }));
+});
+
+// ---------- QA-041: no WhatsApp promises while it's off ----------
+test("QA-041: with WhatsApp off, neither the prompt nor any tool mentions it", () => {
+  assert.ok(!/WhatsApp(?! isn't switched on)/.test(systemPrompt({ channels: ["app", "email"] }).replace("Never mention WhatsApp or promise a WhatsApp message.", "")));
+  for (const t of toolDefs({ channels: ["app", "email"] })) assert.ok(!/WhatsApp/.test(t.description), t.name);
+  assert.ok(/on WhatsApp/.test(systemPrompt({ channels: ["app", "email", "whatsapp"] })));
+});
+
+// ---------- QA-040: Reject discards with a reason; no raw database text ----------
+test("QA-040: Reject needs a reason from the fixed list and goes through the discard path", async () => {
+  const eng = fakeEngine({ desk_discard: { discarded: 1 } });
+  const none = await handleAction({ action: "discard", params: { subject_type: "role", subject_id: "role-9" }, rpc: eng.rpc });
+  assert.equal(none.needs_reason, true); assert.equal(eng.calls.length, 0);
+  const r = await handleAction({ action: "discard", params: { subject_type: "role", subject_id: "role-9", reason: "not_needed" }, rpc: eng.rpc });
+  assert.match(r.reply, /Not needed any more/); assert.deepEqual(eng.calls[0].args, { p_subject_type: "role", p_subject_id: "role-9", p_reason: "not_needed" });
+});
+test("QA-040: database internals become a plain message; our own refusals pass through", async () => {
+  const { friendly } = await import("../supabase/functions/_shared/agent.js");
+  assert.doesNotMatch(friendly(new Error('ERROR:  new row for relation "role" violates check constraint "role_open_needs_approval"')), /relation|constraint|role_open/);
+  assert.match(friendly(new Error("new row violates row-level security policy for table \"person\"")), /don't have access/);
+  assert.equal(friendly(new Error("ERROR:  Pick a reason for sending it back")), "Pick a reason for sending it back");
 });

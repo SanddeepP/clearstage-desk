@@ -22,11 +22,11 @@ export const TOOL_DEFS = [
       title: str("Job title"), city: str("City or Remote"), openings: int("Number of openings, default 1"),
       budget_min_lakh: { type: "number", description: "Yearly CTC lower bound in lakh rupees" }, budget_max_lakh: { type: "number", description: "Yearly CTC upper bound in lakh rupees" },
       experience: str("e.g. '3+ years' or 'Freshers are fine'"), start_within_days: int("Days until they should join") }, required: ["title", "city"] } },
-  { name: "add_candidate", description: "Add a candidate to a role (from a CV or the user's message). Only after the user confirms the candidate agreed to share their details.", input_schema: { type: "object", properties: {
+  { name: "add_candidate", description: "Propose adding a candidate to a role (from a CV or the user's message). Only after the user confirms the candidate agreed to share their details; the user taps Approve first.", input_schema: { type: "object", properties: {
       name: str("Full name"), role_id: uuid("Role id from show_pipeline"), email: str("Email"), phone: str("Phone with country code"), consent_confirmed: { type: "boolean" } }, required: ["name", "role_id", "consent_confirmed"] } },
-  { name: "move_candidate", description: "Move an application to another stage. Can be undone for 10 minutes.", input_schema: { type: "object", properties: { application_id: uuid("Application id"), stage: str("Applied, Screened, Interview or Offer") }, required: ["application_id", "stage"] } },
-  { name: "chase_owner", description: "Send the owner of an open task a WhatsApp reminder (e.g. an interviewer with late feedback). Internal message, no approval needed.", input_schema: { type: "object", properties: { task_id: uuid("Task id from get_brief") }, required: ["task_id"] } },
-  { name: "record_feedback", description: "Save interview feedback (e.g. turned from a WhatsApp reply) as a scorecard.", input_schema: { type: "object", properties: {
+  { name: "move_candidate", description: "Propose moving an application to another stage. The user taps Approve before it moves; it can be undone for 10 minutes.", input_schema: { type: "object", properties: { application_id: uuid("Application id"), stage: str("Applied, Screened, Interview or Offer") }, required: ["application_id", "stage"] } },
+  { name: "chase_owner", description: "Propose a WhatsApp reminder to the owner of an open task (e.g. an interviewer with late feedback). The user taps Approve before it's sent.", input_schema: { type: "object", properties: { task_id: uuid("Task id from get_brief") }, required: ["task_id"] } },
+  { name: "record_feedback", description: "Propose saving interview feedback (e.g. turned from a WhatsApp reply) as a scorecard. The user taps Approve first.", input_schema: { type: "object", properties: {
       application_id: uuid("Application id"), scores: { type: "object", additionalProperties: { type: "integer", minimum: 1, maximum: 5 } },
       recommendation: { type: "string", enum: ["next_round", "hire", "reject", "hold"] }, raw_text: str("The interviewer's words") }, required: ["application_id", "scores", "recommendation"] } },
   { name: "calculate_ctc", description: "Build and check an offer's salary structure from INPUTS ONLY, and save it as a draft offer. Never send rupee amounts for components: the database builds every line (Basic, HRA, Special, PF, ESI, gratuity) with fixed rules and checks the 50% wages rule. Set fix=true to raise Basic until wages reach 51%, keeping CTC the same.", input_schema: { type: "object", additionalProperties: false, properties: {
@@ -41,8 +41,8 @@ export const TOOL_DEFS = [
   { name: "send_offer", description: "Ask for approval to send a saved offer. It goes out only when a person approves. Refused if the wages check fails.", input_schema: { type: "object", properties: { offer_id: uuid("Offer id from calculate_ctc"), summary: str("e.g. \"Kiran's offer, ₹12 L\"") }, required: ["offer_id", "summary"] } },
   { name: "draft_document", description: "Draft a letter (appointment, confirmation, extension, offer letter) for a person. Creates a draft and asks for approval; nothing is sent.", input_schema: { type: "object", properties: {
       person_id: uuid("Person id"), kind: { type: "string", enum: ["appointment_letter", "confirmation_letter", "probation_extension", "offer_letter"] }, details: str("Facts to include: role, dates, CTC, notice period") }, required: ["person_id", "kind", "details"] } },
-  { name: "mark_offer_accepted", description: "When a candidate accepts a sent offer: creates the employee record, the joiner checklist and the probation review.", input_schema: { type: "object", properties: { offer_id: uuid("Offer id") }, required: ["offer_id"] } },
-  { name: "start_probation_review", description: "Ask an employee's manager for their probation review on WhatsApp.", input_schema: { type: "object", properties: { person_id: uuid("Employee's person id") }, required: ["person_id"] } },
+  { name: "mark_offer_accepted", description: "When a candidate accepts a sent offer: proposes creating the employee record, the joiner checklist and the probation review. The user taps Approve first.", input_schema: { type: "object", properties: { offer_id: uuid("Offer id") }, required: ["offer_id"] } },
+  { name: "start_probation_review", description: "Propose asking an employee's manager for their probation review on WhatsApp. The user taps Approve first.", input_schema: { type: "object", properties: { person_id: uuid("Employee's person id") }, required: ["person_id"] } },
   { name: "bulk_reject", description: "Draft rejection notes for several candidates of one role with ONE job-relevant reason; they go out only after approval. Never use age, gender, marital status, religion, caste or pregnancy.", input_schema: { type: "object", properties: {
       role_id: uuid("Role id"), person_ids: { type: "array", items: { type: "string", format: "uuid" } }, reason: { type: "string", enum: REJECT_REASONS },
       note: str("Message to each candidate. Use {name} for their first name. Polite, specific to the job, no protected traits.") }, required: ["role_id", "person_ids", "reason", "note"] } },
@@ -60,8 +60,67 @@ export const TOOL_DEFS = [
   { name: "prepare_reject_batch", description: "Preview the rejection batch for a role: candidates below 50% of must-haves (referrals, people added by hand and unreadable CVs are never included), with the missing skills and one draft note. Preview only: nothing is sent or queued; a person approves the batch.", input_schema: { type: "object", properties: { role_id: uuid("Role id") }, required: ["role_id"] } },
 ];
 
+/* ---- QA-044 (CTO 26 Nov): every tool declares its module, and the check runs before the tool, by the asking user's
+   access (my_access_modules). "today" is everyone's. A letter's module follows its kind. ---- */
+export const TOOL_MODULE = {
+  get_brief: "today", chase_owner: "today", find_people: "hire", show_pipeline: "hire", create_role: "hire", add_candidate: "hire",
+  move_candidate: "hire", record_feedback: "hire", calculate_ctc: "hire", send_offer: "hire", bulk_reject: "hire", set_requirements: "hire",
+  get_shortlist: "hire", explain_fit: "hire", prepare_reject_batch: "hire", draft_document: "hire",
+  show_joiners: "onboard", mark_offer_accepted: "onboard", start_probation_review: "probation",
+};
+const DOC_MODULE = { offer_letter: "hire", appointment_letter: "onboard", confirmation_letter: "probation", probation_extension: "probation" };
+/** The module one call belongs to (draft_document depends on the letter). */
+export const toolModule = (name, input = {}) => name === "draft_document" ? (DOC_MODULE[input.kind] || "onboard") : TOOL_MODULE[name];
+/* ---- QA-045 (CTO 26 Nov): a question never runs an action tool. These only read (or preview, sending nothing). ---- */
+export const READ_ONLY_TOOLS = ["get_brief", "find_people", "show_pipeline", "show_joiners", "get_shortlist", "explain_fit", "prepare_reject_batch"];
+/* Tools that would change something straight away. They now return a draft card; a person's tap runs them (handleAction "run"). */
+export const CONFIRM_TOOLS = ["add_candidate", "move_candidate", "chase_owner", "record_feedback", "mark_offer_accepted", "start_probation_review"];
+/** The tool list for one turn: only tools of modules the user can use, read-only ones for a question, and no WhatsApp wording
+ *  while the company has no WhatsApp channel (QA-041). */
+export function toolDefs({ modules = null, question = false, channels = ["app", "email"] } = {}) {
+  const wa = channels.includes("whatsapp");
+  return TOOL_DEFS
+    .filter(t => !question || READ_ONLY_TOOLS.includes(t.name))
+    .filter(t => !modules || t.name === "draft_document" || TOOL_MODULE[t.name] === "today" || modules.includes(TOOL_MODULE[t.name]))
+    .map(t => wa ? t : { ...t, description: t.description.replace(/ on WhatsApp/g, "").replace(/a WhatsApp reminder/g, "a reminder").replace(/ \(e\.g\. turned from a WhatsApp reply\)/g, "") });
+}
+
 const L = 100000; // rupees in a lakh
 const bucketPill = b => b === "Late" ? "late" : b === "Today" ? "warn" : "info";
+
+/** The real actions behind CONFIRM_TOOLS. Only reached from a person's tap (handleAction "run"), never by the model. */
+export function makeActors({ rpc }) {
+  return {
+    async add_candidate(a) {
+      const r = await rpc("desk_add_candidate", { p_name: a.name, p_role_id: a.role_id, p_email: a.email ?? null, p_phone: a.phone ?? null, p_consent: true });
+      return { reply: `${a.name} added as Applied. Consent recorded.`, result: r };
+    },
+    async move_candidate(a) {
+      const r = await rpc("desk_move_candidate", { p_application: a.application_id, p_stage: a.stage });
+      return { reply: `Moved from ${r.from} to ${r.to}.`, result: r, cards: [{ type: "info", text: `Moved from ${r.from} to ${r.to}.`, actions: [{ label: "Undo (10 min)", action: "undo", params: { event: r.undo_event } }] }] };
+    },
+    async chase_owner({ task_id }) { const r = await rpc("desk_chase_owner", { p_task: task_id }); return { reply: r?.chased ? `Reminder sent to ${r.chased}.` : "Reminder sent.", result: r }; },
+    async record_feedback(a) {
+      const r = await rpc("desk_record_feedback", { p_application: a.application_id, p_scores: a.scores, p_recommendation: a.recommendation, p_raw: a.raw_text ?? null });
+      return { reply: "Feedback saved.", result: r, cards: [{ type: "scorecard", scores: a.scores, recommendation: a.recommendation, raw_text: a.raw_text ?? null, application_id: a.application_id }] };
+    },
+    async mark_offer_accepted({ offer_id }) { const r = await rpc("desk_mark_offer_accepted", { p_offer: offer_id }); return { reply: "Marked as accepted. The joiner checklist and probation review are set up.", result: r }; },
+    async start_probation_review({ person_id }) { const r = await rpc("desk_start_probation_review", { p_person: person_id }); return { reply: "Probation review requested from their manager.", result: r }; },
+  };
+}
+const CONFIRM_TITLE = {
+  add_candidate: a => [`Add ${a.name} as a candidate`, `Adds ${a.name} to the role as Applied, with their consent recorded.`],
+  move_candidate: a => ["Move a candidate", `Moves the application to ${a.stage}. You can undo it for 10 minutes.`],
+  chase_owner: () => ["Send a reminder", "Sends the task's owner a reminder."],
+  record_feedback: a => ["Save interview feedback", `Recommendation: ${String(a.recommendation || "").replace("_", " ")}.`],
+  mark_offer_accepted: () => ["Mark the offer as accepted", "Creates the employee record, the joiner checklist and the probation review."],
+  start_probation_review: () => ["Start a probation review", "Asks the employee's manager for their probation review."],
+};
+const confirmCard = (tool, input) => {
+  const [title, preview] = CONFIRM_TITLE[tool](input);
+  return { type: "approval", title, preview, proposed: true,
+    actions: [{ label: "Approve", action: "run", params: { tool, input } }, { label: "Cancel", action: "cancel", params: { tool } }] };
+};
 
 export function makeExecutors({ rpc, draft }) {
   const approvalCard = (subjectType, subjectId, title, preview, ap) => ({
@@ -71,6 +130,8 @@ export function makeExecutors({ rpc, draft }) {
                                     { label: "Reject", action: "discard", params: { subject_type: subjectType, subject_id: subjectId } }],
   });
 
+  // QA-045: nothing changes until a person taps Approve on the card.
+  const proposed = (tool, input) => ({ result: { proposed: true, instruction: "Nothing has happened yet. Tell the user in one sentence that it's ready for their approval." }, cards: [confirmCard(tool, input)] });
   return {
     async get_brief() {
       const b = await rpc("desk_get_brief");
@@ -104,21 +165,11 @@ export function makeExecutors({ rpc, draft }) {
     },
     async add_candidate(a) {
       if (!a.consent_confirmed) return { result: { error: "Ask the user to confirm the candidate agreed to share their details" }, cards: [] };
-      const r = await rpc("desk_add_candidate", { p_name: a.name, p_role_id: a.role_id, p_email: a.email ?? null, p_phone: a.phone ?? null, p_consent: true });
-      return { result: r, cards: [{ type: "info", text: `${a.name} added as Applied. Consent recorded.` }] };
+      return proposed("add_candidate", a);
     },
-    async move_candidate(a) {
-      const r = await rpc("desk_move_candidate", { p_application: a.application_id, p_stage: a.stage });
-      return { result: r, cards: [{ type: "info", text: `Moved from ${r.from} to ${r.to}.`, actions: [{ label: "Undo (10 min)", action: "undo", params: { event: r.undo_event } }] }] };
-    },
-    async chase_owner({ task_id }) {
-      const r = await rpc("desk_chase_owner", { p_task: task_id });
-      return { result: r, cards: [] };
-    },
-    async record_feedback(a) {
-      const r = await rpc("desk_record_feedback", { p_application: a.application_id, p_scores: a.scores, p_recommendation: a.recommendation, p_raw: a.raw_text ?? null });
-      return { result: r, cards: [{ type: "scorecard", scores: a.scores, recommendation: a.recommendation, raw_text: a.raw_text ?? null, application_id: a.application_id }] };
-    },
+    async move_candidate(a) { return proposed("move_candidate", a); },
+    async chase_owner({ task_id }) { return proposed("chase_owner", { task_id }); },
+    async record_feedback(a) { return proposed("record_feedback", a); },
     async calculate_ctc(a) {
       // Inputs only (CTO ruling 21 Nov, §4.1.2): whatever else the model sends is dropped here, and the database refuses amounts too.
       const inputs = { ctc: a.ctc };
@@ -148,17 +199,8 @@ export function makeExecutors({ rpc, draft }) {
       const ap = await rpc("desk_request_approval", { p_subject_type: "document", p_subject_id: doc.document_id, p_summary: kind.replace(/_/g, " ") });
       return { result: { document_id: doc.document_id, approval: ap }, cards: [approvalCard("document", doc.document_id, kind.replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase()), body, ap)] };
     },
-    async mark_offer_accepted({ offer_id }) {
-      const r = await rpc("desk_mark_offer_accepted", { p_offer: offer_id });
-      const j = await rpc("desk_show_joiners");
-      const me = j.find(x => x.person_id === r.person_id);
-      return { result: r, cards: me ? [{ type: "joiner_checklist", name: me.name, joined_on: me.joined_on, probation_ends_on: me.probation_ends_on,
-        tasks: me.tasks.map(t => ({ title: t.title, owner: t.owner, due: t.due_at, status: t.status })) }] : [] };
-    },
-    async start_probation_review({ person_id }) {
-      const r = await rpc("desk_start_probation_review", { p_person: person_id });
-      return { result: r, cards: [] };
-    },
+    async mark_offer_accepted({ offer_id }) { return proposed("mark_offer_accepted", { offer_id }); },
+    async start_probation_review({ person_id }) { return proposed("start_probation_review", { person_id }); },
     async set_requirements(a) {
       const lists = [a.must, a.nice || [], a.conditions || []].map(l => l.map(x => x.label)).flat().join(" ");
       const bad = blockedText(lists); if (bad) throw new Error(`Requirements must be job-relevant; "${bad}" can't be used`);

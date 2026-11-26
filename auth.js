@@ -193,7 +193,7 @@ export async function callDesk(body) {
   const r = await fetch(`${SUPABASE_URL}/functions/v1/desk`, { method: "POST",
     headers: { Authorization: `Bearer ${data.session.access_token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({ error: "Desk sent an unreadable reply" }));
-  if (!r.ok || j.error) { if (isSessionExpired(j.error)) throw new SessionExpiredError(); throw new Error(j.error || `Desk error ${r.status}`); }
+  if (!r.ok || j.error) { if (isSessionExpired(j.error)) throw new SessionExpiredError(); throw new Error(plainError(j.error || `Desk error ${r.status}`)); }
   return j;
 }
 
@@ -298,11 +298,23 @@ export function codeError(err, sentAt, now = Date.now()) {
   return friendly(err);
 }
 
+/** QA-040: database internals never reach the screen; our own plain refusals pass through. */
+export function plainError(m) {
+  m = String(m || "").replace(/^.*?ERROR:\s*/, "").trim();
+  if (/row-level security|permission denied|insufficient privilege/i.test(m)) return "You don't have access to that. Nothing was changed.";
+  if (/violates (check|foreign key|not-null|unique) constraint|duplicate key|new row for relation|invalid input syntax|syntax error|relation .* does not exist|function .* does not exist|null value in column|value too long|out of range/i.test(m))
+    return "That couldn't be saved. Nothing was changed. Try again, or ask your Super admin if it keeps happening.";
+  return m || "Something went wrong. Nothing was changed.";
+}
 function friendly(err) {
   const m = (err && err.message) || "";
   if (isSessionExpired(err)) return SESSION_EXPIRED;          // before the code-expired wording below
   const wait = m.match(/only request this after (\d+) seconds?/i);   // Supabase's 60-second resend cooldown
   if (wait) return `We just sent you a code. Use that one, or ask for a new code in ${wait[1]} seconds.`;
+  // QA-040: no raw database text on screen
+  if (/row-level security|permission denied|insufficient privilege/i.test(m)) return "You don't have access to that. Nothing was changed.";
+  if (/violates (check|foreign key|not-null|unique) constraint|duplicate key|new row for relation|invalid input syntax|syntax error|relation .* does not exist|function .* does not exist|null value in column|value too long|out of range/i.test(m))
+    return "That couldn't be saved. Nothing was changed. Try again, or ask your Super admin if it keeps happening.";
   if (/rate limit|too many/i.test(m)) return "Too many codes requested. Wait a minute, then try again.";
   if (/expired|invalid/i.test(m)) return CODE_EXPIRED;
   if (/signups? not allowed|disabled/i.test(m)) return "New sign-ups are switched off for this workspace. Ask the admin to invite you.";

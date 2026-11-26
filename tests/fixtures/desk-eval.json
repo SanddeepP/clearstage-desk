@@ -1,0 +1,49 @@
+{
+ "_note": "Desk eval set. QA-045 phrasings (QA bug log 26 Nov) plus requests that must still act.",
+ "questions": [
+  {
+   "text": "what is Priya's phone number?",
+   "from": "QA-045"
+  },
+  {
+   "text": "show me Priya",
+   "from": "QA-045"
+  },
+  {
+   "text": "Priya ka phone number kya hai",
+   "from": "QA-045"
+  },
+  {
+   "text": "tell me about Sneha",
+   "from": "QA-044"
+  },
+  {
+   "text": "tell me about Priya Nair",
+   "from": "QA-044"
+  },
+  {
+   "text": "who is Arjun Mehta?",
+   "from": "Dev"
+  }
+ ],
+ "requests": [
+  {
+   "text": "Chase Arjun Mehta"
+  },
+  {
+   "text": "can you chase Arjun?"
+  },
+  {
+   "text": "Need a QA engineer in Chennai, 6-8 LPA, 3 yrs, joining in 45 days"
+  },
+  {
+   "text": "Ek data analyst chahiye Bangalore mein, 8-10L"
+  },
+  {
+   "text": "start Priya's probation review"
+  },
+  {
+   "text": "Kiran ka offer bana do"
+  }
+ ]
+}

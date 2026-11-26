@@ -165,8 +165,9 @@ do $$ declare a uuid := (select v::uuid from rp where k = 'A'); b uuid := (selec
   if is_admin(a) or can_approve(a) then raise exception 'FAILED: P-R can administer or approve'; end if;
   select count(*) into n from application where company_id = a; if n = 0 then raise exception 'FAILED: P-R can''t read Hire'; end if;
   select count(*) into n from role where company_id = a; if n = 0 then raise exception 'FAILED: P-R can''t read roles'; end if;
-  begin perform desk_approve('offer', (select v::uuid from rp where k = 'offer')); raise exception 'SHOULD HAVE FAILED';
-  exception when others then if sqlerrm like 'SHOULD%' then raise exception 'FAILED: P-R approved an offer'; end if; end;
+  declare r jsonb; begin r := desk_approve('offer', (select v::uuid from rp where k = 'offer'));
+    if coalesce((r->>'approved')::int, 0) > 0 then raise exception 'FAILED: P-R approved an offer: %', r; end if;
+  exception when others then if sqlerrm like 'FAILED%' then raise; end if; end;
   begin perform set_member_roles((select v::uuid from rp where k = 'm_hr.lead'), array['recruiter']); raise exception 'SHOULD HAVE FAILED';
   exception when others then if sqlerrm <> 'Only a Super admin can change roles' then raise exception 'FAILED: P-R changed roles: %', sqlerrm; end if; end;
   begin update member set full_name = 'Renamed By Recruiter' where company_id = a and user_id <> auth.uid(); get diagnostics n = row_count; if n <> 0 then raise exception 'FAILED: P-R edited other members'; end if; end;
@@ -304,7 +305,7 @@ reset role; set role authenticated;
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000002';
 do $$ begin
   begin perform decide_profile_change((select id from employee_change_request where field = 'phone' and status = 'pending' and new_value = '+91 98480 12345'), true); raise exception 'SHOULD HAVE FAILED';
-  exception when others then if sqlerrm <> 'Only HR or a Super admin can approve changes to employee records' then raise exception 'FAILED: recruiter decided: %', sqlerrm; end if; end;
+  exception when others then if sqlerrm not in ('Only HR or a Super admin can approve changes to employee records', 'That request isn''t in your workspace') then raise exception 'FAILED: recruiter decided: %', sqlerrm; end if; end;
 end $$;
 reset role; set role authenticated;
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000003';

@@ -67,7 +67,9 @@ select 'req', (select id::text from requirement where company_id = a.v::uuid lim
 select 'job', (select id::text from cv_job where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
 select 'event', (select id::text from audit_event where company_id = a.v::uuid order by id limit 1) from iso a where a.k = 'A' union all
 select 'member', (select id::text from member where company_id = a.v::uuid order by created_at desc limit 1) from iso a where a.k = 'A' union all
-select 'ecr', (select id::text from employee_change_request where company_id = a.v::uuid limit 1) from iso a where a.k = 'A';
+select 'ecr', (select id::text from employee_change_request where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
+select 'interview', (select id::text from interview where company_id = a.v::uuid limit 1) from iso a where a.k = 'A' union all
+select 'cv_file', (select id::text from cv_file where company_id = a.v::uuid limit 1) from iso a where a.k = 'A';
 do $$ begin if exists (select 1 from iso where v is null) then raise exception 'FAILED: missing A id: %', (select string_agg(k, ',') from iso where v is null); end if; end $$;
 
 -- Fingerprint of all of A's data
@@ -195,7 +197,8 @@ insert into calls values
   ('desk_claim_cv_job',             $c$desk_claim_cv_job(null)$c$),
   ('desk_confirm_requirements',     $c$desk_confirm_requirements('{req}')$c$),
   ('desk_create_role',              $c$desk_create_role('Iso Role', 'Pune', 1, null, null, null, null, null)$c$),
-  ('desk_discard',                  $c$desk_discard('offer', '{offer}')$c$),
+  ('desk_discard',                  $c$desk_discard('offer', '{offer}', 'not_needed')$c$),
+  ('draft_reject_reasons',          $c$draft_reject_reasons()$c$),
   ('desk_draft_requirements',       $c$desk_draft_requirements('{role}', '[]', '[]', '[]', 1, 3, null)$c$),
   ('desk_enqueue_cv',               $c$desk_enqueue_cv('{app}', '{req}', '{A}/ISO-SECRET-A.pdf', 'x.pdf', repeat('a', 64))$c$),
   ('desk_explain_fit',              $c$desk_explain_fit('{app}')$c$),
@@ -259,7 +262,18 @@ insert into calls values
   ('company_change_requests',       $c$company_change_requests()$c$),
   ('decide_profile_change',         $c$decide_profile_change('{ecr}', true, null)$c$),
   ('company_employees',             $c$company_employees()$c$),
-  ('invite_employee',               $c$invite_employee('{person}', 'iso-probe-employee@test.in')$c$);
+  ('invite_employee',               $c$invite_employee('{person}', 'iso-probe-employee@test.in')$c$),
+  ('hire_only',                     $c$hire_only('{A}')$c$),
+  ('my_access_modules',             $c$my_access_modules()$c$),
+  ('hs_person',                     $c$hs_person('{person}')$c$),
+  ('hs_application',                $c$hs_application('{app}')$c$),
+  ('hs_offer',                      $c$hs_offer('{offer}')$c$),
+  ('hs_interview',                  $c$hs_interview('{interview}')$c$),
+  ('hs_cv_file',                    $c$hs_cv_file('{cv_file}')$c$),
+  ('hs_doc_kind',                   $c$hs_doc_kind('appointment_letter')$c$),
+  ('hs_document',                   $c$hs_document('{doc}')$c$),
+  ('hs_task_kind',                  $c$hs_task_kind('it_setup')$c$),
+  ('hs_subject',                    $c$hs_subject('person', '{person}')$c$);
 grant select on calls to authenticated;
 -- Pure functions: no table access, nothing of a company's to leak
 create temp table pure(name text primary key);
